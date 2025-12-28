@@ -291,7 +291,7 @@ This project is proprietary. All rights reserved.
 
 ## 👥 Contributors
 
-- Bubbalan Shanmugam
+- Bubalan S
 
 ## 📞 Support
 
