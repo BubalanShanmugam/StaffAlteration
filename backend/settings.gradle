@@ -1,0 +1,2 @@
+// settings.gradle.kts content will go here if using Kotlin, but for Groovy:
+rootProject.name = 'staff-alteration-system'
