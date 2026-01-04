@@ -7,6 +7,7 @@ interface CreateTimetableModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  initialData?: any
 }
 
 const CLASSES = ['CS1', 'CS2', 'IT1', 'IT2']
@@ -19,17 +20,19 @@ export const CreateTimetableModal: React.FC<CreateTimetableModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  initialData,
 }) => {
+  const isEditMode = !!initialData
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
-    templateName: '',
-    classCode: 'CS1',
-    dayOrder: 1,
-    periodNumber: 1,
-    subjectCode: 'JAVA',
-    staffId: 'Staff1',
-    remarks: '',
+    templateName: initialData?.templateName || '',
+    classCode: initialData?.classCode || 'CS1',
+    dayOrder: initialData?.dayOrder || 1,
+    periodNumber: initialData?.periodNumber || 1,
+    subjectCode: initialData?.subjectCode || 'JAVA',
+    staffId: initialData?.staffId || 'Staff1',
+    remarks: initialData?.remarks || '',
   })
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -38,7 +41,13 @@ export const CreateTimetableModal: React.FC<CreateTimetableModalProps> = ({
     setLoading(true)
 
     try {
-      await timetableAPI.create(formData)
+      if (isEditMode && initialData?.id) {
+        // Update existing timetable
+        await timetableAPI.update(initialData.id, formData)
+      } else {
+        // Create new timetable
+        await timetableAPI.create(formData)
+      }
       onSuccess()
       setFormData({
         templateName: '',
@@ -50,7 +59,8 @@ export const CreateTimetableModal: React.FC<CreateTimetableModalProps> = ({
         remarks: '',
       })
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create timetable')
+      const action = isEditMode ? 'update' : 'create'
+      setError(err.response?.data?.message || `Failed to ${action} timetable`)
     } finally {
       setLoading(false)
     }
@@ -62,7 +72,9 @@ export const CreateTimetableModal: React.FC<CreateTimetableModalProps> = ({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
       <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white flex items-center justify-between p-6 border-b border-slate-200">
-          <h2 className="text-2xl font-bold text-slate-900">Create Timetable</h2>
+          <h2 className="text-2xl font-bold text-slate-900">
+            {isEditMode ? 'Edit Timetable' : 'Create Timetable'}
+          </h2>
           <button
             onClick={onClose}
             className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -184,7 +196,7 @@ export const CreateTimetableModal: React.FC<CreateTimetableModalProps> = ({
               className="flex-1"
               size="lg"
             >
-              Create Timetable
+              {isEditMode ? 'Update Timetable' : 'Create Timetable'}
             </Button>
             <Button
               type="button"

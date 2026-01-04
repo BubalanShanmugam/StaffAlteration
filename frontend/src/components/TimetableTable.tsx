@@ -7,9 +7,10 @@ import { Button } from './common'
 interface TimetableTableProps {
   timetables: TimetableTemplate[]
   onRefresh: () => void
+  onEdit?: (timetable: TimetableTemplate) => void
 }
 
-export const TimetableTable: React.FC<TimetableTableProps> = ({ timetables, onRefresh }) => {
+export const TimetableTable: React.FC<TimetableTableProps> = ({ timetables, onRefresh, onEdit }) => {
   const [deleting, setDeleting] = useState<number | null>(null)
 
   const handleDelete = async (id: number) => {
@@ -91,6 +92,7 @@ export const TimetableTable: React.FC<TimetableTableProps> = ({ timetables, onRe
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-center">
                     <button
+                      onClick={() => onEdit?.(timetable)}
                       className="p-2 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
                       title="Edit"
                     >

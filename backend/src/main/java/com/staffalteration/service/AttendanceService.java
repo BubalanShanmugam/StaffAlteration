@@ -79,23 +79,49 @@ public class AttendanceService {
             
             // If marked absent, trigger alteration process
             if (savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
-                triggerAlterationProcess(staff, date);
+                triggerAlterationProcess(staff, date, savedAttendance.getDayType());
             }
         }
         
         return results.isEmpty() ? null : results.get(0);
     }
     
-    private void triggerAlterationProcess(Staff staff, LocalDate date) {
-        log.info("Triggering alteration process for staff: {} on date: {}", staff.getStaffId(), date);
+    private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance.DayType dayType) {
+        log.info("Triggering alteration process for staff: {} on date: {}, dayType: {}", staff.getStaffId(), date, dayType);
         
         // Get all timetables for this staff
         List<Timetable> timetables = timetableRepository.findByStaffId(staff.getId());
         
-        // Process alteration for each timetable
-        for (Timetable timetable : timetables) {
+        // Filter timetables based on dayType
+        List<Timetable> filteredTimetables = timetables.stream()
+                .filter(timetable -> shouldProcessTimetable(timetable.getPeriodNumber(), dayType))
+                .collect(Collectors.toList());
+        
+        log.info("Processing {} timetables (filtered from {}) for dayType: {}", 
+                 filteredTimetables.size(), timetables.size(), dayType);
+        
+        // Process alteration for each relevant timetable
+        for (Timetable timetable : filteredTimetables) {
             alterationService.processAlteration(timetable, date);
         }
+    }
+    
+    /**
+     * Determine if a timetable period should be processed based on dayType
+     * Periods 1-2 are morning (9:00 AM - 1:00 PM)
+     * Periods 3-5 are afternoon (1:00 PM - 5:00 PM)
+     */
+    private boolean shouldProcessTimetable(Integer periodNumber, Attendance.DayType dayType) {
+        if (dayType == Attendance.DayType.FULL_DAY) {
+            return true; // All periods affected
+        } else if (dayType == Attendance.DayType.MORNING_ONLY) {
+            // Periods 1-2 are morning (9:00 AM - 1:00 PM)
+            return periodNumber != null && periodNumber <= 2;
+        } else if (dayType == Attendance.DayType.AFTERNOON_ONLY) {
+            // Periods 3-5 are afternoon (1:00 PM - 5:00 PM)
+            return periodNumber != null && periodNumber >= 3;
+        }
+        return false;
     }
     
     public AttendanceDTO getAttendance(Long attendanceId) {

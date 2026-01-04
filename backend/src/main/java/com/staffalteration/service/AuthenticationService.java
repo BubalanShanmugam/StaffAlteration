@@ -68,6 +68,17 @@ public class AuthenticationService {
         log.info("🔐 Login attempt for user: {}", authRequest.getUsername());
         
         try {
+            // First verify user exists
+            var userOpt = userRepository.findByUsername(authRequest.getUsername());
+            if (userOpt.isEmpty()) {
+                log.error("❌ User not found: {}", authRequest.getUsername());
+                throw new RuntimeException("Invalid credentials");
+            }
+            
+            var userEntity = userOpt.get();
+            log.info("✓ User found: {} with {} roles", userEntity.getUsername(), userEntity.getRoles().size());
+            userEntity.getRoles().forEach(role -> log.info("  - Role: {}", role.getRoleType()));
+            
             // Authenticate using Spring Security's AuthenticationManager
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
@@ -75,6 +86,8 @@ public class AuthenticationService {
                             authRequest.getPassword()
                     )
             );
+            
+            log.info("✓ Authentication successful for: {}", authRequest.getUsername());
             
             // Generate access token (24 hours)
             String accessToken = tokenProvider.generateToken(authentication);
@@ -97,6 +110,7 @@ public class AuthenticationService {
                     .build();
         } catch (org.springframework.security.core.AuthenticationException e) {
             log.error("❌ Authentication failed for user: {}", authRequest.getUsername());
+            log.error("Error details: {}", e.getMessage(), e);
             throw new RuntimeException("Invalid credentials");
         } catch (Exception e) {
             log.error("❌ Login failed for user {}: {}", authRequest.getUsername(), e.getMessage());

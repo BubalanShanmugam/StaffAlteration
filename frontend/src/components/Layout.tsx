@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Menu, X, BarChart3, Calendar, Settings, Clock, Users, FileText } from 'lucide-react'
+import { LogOut, Menu, X, BarChart3, Calendar, Settings, Clock, Users, FileText, BookOpen } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 
 interface LayoutProps {
@@ -26,8 +26,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     ]
 
     const hodAdminItems = [
+      { icon: Users, label: 'Staff Directory', path: '/staff-management' },
       { icon: Users, label: 'HOD Dashboard', path: '/hod-dashboard' },
       { icon: FileText, label: 'Manage Timetables', path: '/manage-timetable' },
+      { icon: Calendar, label: 'Day Order Schedule', path: '/day-order-schedule' },
+      { icon: BookOpen, label: 'Class Management', path: '/class-management' },
     ]
 
     const isHodOrAdmin = user?.roles.some((r) => ['HOD', 'ADMIN'].includes(r))

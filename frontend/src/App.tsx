@@ -9,6 +9,9 @@ import { AttendancePage } from './pages/AttendancePage'
 import { AlterationDashboardPage } from './pages/AlterationDashboardPage'
 import { HodDashboardPage } from './pages/HodDashboardPage'
 import { TimetableManagementPage } from './pages/TimetableManagementPage'
+import { StaffManagementPage } from './pages/StaffManagementPage'
+import { DayOrderSchedulePage } from './pages/DayOrderSchedulePage'
+import { ClassManagementPage } from './pages/ClassManagementPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 
 function App() {
@@ -53,6 +56,30 @@ function App() {
           element={
             <ProtectedRoute requiredRoles={['HOD', 'ADMIN', 'STAFF']}>
               <TimetableManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/staff-management"
+          element={
+            <ProtectedRoute requiredRoles={['HOD', 'ADMIN']}>
+              <StaffManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/day-order-schedule"
+          element={
+            <ProtectedRoute requiredRoles={['HOD', 'ADMIN']}>
+              <DayOrderSchedulePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/class-management"
+          element={
+            <ProtectedRoute requiredRoles={['HOD', 'ADMIN']}>
+              <ClassManagementPage />
             </ProtectedRoute>
           }
         />

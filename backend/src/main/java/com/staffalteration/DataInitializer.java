@@ -135,15 +135,86 @@ public class DataInitializer implements CommandLineRunner {
         log.info("Initializing staff...");
         
         Role staffRole = roleRepository.findByRoleType(Role.RoleType.STAFF).get();
+        Role hodRole = roleRepository.findByRoleType(Role.RoleType.HOD).get();
         Department csDept = departmentRepository.findByDepartmentCode("CS").get();
         Department itDept = departmentRepository.findByDepartmentCode("IT").get();
         
+        // Create HOD user first
+        String hodId = "HOD1";
+        String hodEmail = "hod1@college.edu";
+        
+        Set<Role> hodRoles = new HashSet<>();
+        hodRoles.add(hodRole);
+        
+        User hodUser = User.builder()
+                .username(hodId)
+                .email(hodEmail)
+                .password(passwordEncoder.encode("password123"))
+                .enabled(true)
+                .roles(hodRoles)
+                .build();
+        
+        User savedHodUser = userRepository.save(hodUser);
+        
+        Staff hod = Staff.builder()
+                .staffId(hodId)
+                .firstName("Head")
+                .lastName("Of Department")
+                .email(hodEmail)
+                .phoneNumber("9876543210")
+                .department(csDept)
+                .user(savedHodUser)
+                .status(Staff.StaffStatus.ACTIVE)
+                .build();
+        
+        staffRepository.save(hod);
+        log.info("HOD user initialized: HOD1 created");
+        
+        // Create second HOD user
+        String hod2Id = "HOD2";
+        String hod2Email = "bubalanshanmugam62@gmail.com";
+        
+        Set<Role> hod2Roles = new HashSet<>();
+        hod2Roles.add(hodRole);
+        
+        User hod2User = User.builder()
+                .username(hod2Id)
+                .email(hod2Email)
+                .password(passwordEncoder.encode("password123"))
+                .enabled(true)
+                .roles(hod2Roles)
+                .build();
+        
+        User savedHod2User = userRepository.save(hod2User);
+        
+        Staff hod2 = Staff.builder()
+                .staffId(hod2Id)
+                .firstName("Bubalan")
+                .lastName("Shanmugam")
+                .email(hod2Email)
+                .phoneNumber("8056822838")
+                .department(itDept)
+                .user(savedHod2User)
+                .status(Staff.StaffStatus.ACTIVE)
+                .build();
+        
+        staffRepository.save(hod2);
+        log.info("HOD user initialized: HOD2 created");
+        
+        // Create regular staff
         String[] staffNames = {"Staff1", "Staff2", "Staff3", "Staff4", "Staff5"};
         Department[] depts = {csDept, csDept, itDept, itDept, csDept};
         
         for (int i = 0; i < staffNames.length; i++) {
             String staffId = staffNames[i];
             String email = staffId.toLowerCase() + "@college.edu";
+            String phoneNumber = "9876543210";
+            
+            // Special details for Staff1
+            if (i == 0) {
+                email = "bubalanshanmugam62@gmail.com";
+                phoneNumber = "8056822838";
+            }
             
             // Create User
             Set<Role> roles = new HashSet<>();
@@ -165,7 +236,7 @@ public class DataInitializer implements CommandLineRunner {
                     .firstName("First" + i)
                     .lastName("Last" + i)
                     .email(email)
-                    .phoneNumber("9876543210")
+                    .phoneNumber(phoneNumber)
                     .department(depts[i])
                     .user(savedUser)
                     .status(Staff.StaffStatus.ACTIVE)
@@ -174,7 +245,7 @@ public class DataInitializer implements CommandLineRunner {
             staffRepository.save(staff);
         }
         
-        log.info("Staff initialized: 5 staff members created");
+        log.info("Staff initialized: 5 staff members + 1 HOD created");
     }
     
     private void initializeTimetables() {
