@@ -152,9 +152,36 @@ export const alterationAPI = {
   getByStaff: (staffId: string) =>
     apiClient.get<any>(`/alteration/staff/${staffId}`),
   
+  getByDepartment: (departmentId: string) =>
+    apiClient.get<any>(`/alteration/department/${departmentId}`),
+  
   updateStatus: (alterationId: number, status: string) =>
     apiClient.put<any>(`/alteration/${alterationId}/status`, { status }),
   
   acknowledge: (alterationId: number) =>
     apiClient.put<any>(`/alteration/${alterationId}/acknowledge`, {}),
+  
+  reject: (alterationId: number) =>
+    apiClient.put<any>(`/alteration/${alterationId}/reject`, {}),
+  
+  markCompleted: (alterationId: number) =>
+    apiClient.put<any>(`/alteration/${alterationId}/mark-completed`, {}),
+}
+
+// Class Management APIs
+export const classManagementAPI = {
+  create: (data: any) =>
+    apiClient.post<any>('/class-management/create', data),
+  
+  getAll: () =>
+    apiClient.get<any>('/class-management/all'),
+  
+  getByCode: (classCode: string) =>
+    apiClient.get<any>(`/class-management/${classCode}`),
+  
+  update: (classId: number, data: any) =>
+    apiClient.put<any>(`/class-management/update/${classId}`, data),
+  
+  delete: (classId: number) =>
+    apiClient.delete(`/class-management/${classId}`),
 }

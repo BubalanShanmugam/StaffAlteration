@@ -71,6 +71,7 @@ public class Alteration {
         ASSIGNED,
         ACKNOWLEDGED,
         COMPLETED,
-        CANCELLED
+        CANCELLED,
+        REJECTED
     }
 }

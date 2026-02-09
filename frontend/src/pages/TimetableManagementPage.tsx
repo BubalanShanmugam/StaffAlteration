@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, Save, X, Eye } from 'lucide-react'
 import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
-import { timetableAPI } from '../api'
+import { timetableAPI, classManagementAPI } from '../api'
 import { useAuthStore } from '../store/authStore'
 
 const DAYS = [
@@ -23,7 +23,6 @@ const PERIODS = [
   { number: 6, time: '3:00 PM - 4:00 PM' },
 ]
 
-const CLASSES = ['CS', 'IT']
 const SUBJECTS = [
   { code: 'DSA', name: 'Data Structures & Algorithms' },
   { code: 'WEB', name: 'Web Development' },
@@ -43,6 +42,14 @@ interface Timetable {
   status: string
 }
 
+interface ClassInfo {
+  id: number
+  classCode: string
+  className: string
+  departmentId: number
+  departmentName: string
+}
+
 interface EditingCell {
   dayOrder: number
   periodNumber: number
@@ -52,7 +59,8 @@ interface EditingCell {
 export const TimetableManagementPage: React.FC = () => {
   const user = useAuthStore((state) => state.user)
   const [timetables, setTimetables] = useState<Timetable[]>([])
-  const [selectedClass, setSelectedClass] = useState('CS')
+  const [classes, setClasses] = useState<ClassInfo[]>([])
+  const [selectedClass, setSelectedClass] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -61,10 +69,34 @@ export const TimetableManagementPage: React.FC = () => {
     subjectCode: '',
     staffId: '',
   })
+  const [showAddClassModal, setShowAddClassModal] = useState(false)
+  const [newClassData, setNewClassData] = useState({
+    classCode: '',
+    className: '',
+    departmentId: 1,
+  })
 
   useEffect(() => {
-    loadTimetables()
+    loadClasses()
+  }, [])
+
+  useEffect(() => {
+    if (selectedClass) {
+      loadTimetables()
+    }
   }, [selectedClass])
+
+  const loadClasses = async () => {
+    try {
+      const response = await classManagementAPI.getAll()
+      setClasses(response.data.data || [])
+      if (response.data.data && response.data.data.length > 0) {
+        setSelectedClass(response.data.data[0].classCode)
+      }
+    } catch (err: any) {
+      setError('Failed to load classes')
+    }
+  }
 
   const loadTimetables = async () => {
     try {
@@ -75,6 +107,23 @@ export const TimetableManagementPage: React.FC = () => {
       setError('Failed to load timetable')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleAddClass = async () => {
+    if (!newClassData.classCode || !newClassData.className) {
+      setError('Please fill in all fields')
+      return
+    }
+
+    try {
+      await classManagementAPI.create(newClassData)
+      setSuccess('✅ Class created successfully!')
+      setShowAddClassModal(false)
+      setNewClassData({ classCode: '', className: '', departmentId: 1 })
+      loadClasses()
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to create class')
     }
   }
 
@@ -148,13 +197,26 @@ export const TimetableManagementPage: React.FC = () => {
     }
   }
 
+  const isHodOrAdmin = user?.roles.some((r) => ['HOD', 'ADMIN'].includes(r))
+
   return (
     <Layout>
       <div className="space-y-6 animate-fadeIn">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Timetable Management</h1>
-          <p className="text-slate-600 mt-1">Create, edit, and manage class timetables</p>
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Timetable Management</h1>
+            <p className="text-slate-600 mt-1">Create, edit, and manage class timetables</p>
+          </div>
+          {isHodOrAdmin && (
+            <button
+              onClick={() => setShowAddClassModal(true)}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              Add New Class
+            </button>
+          )}
         </div>
 
         {error && (
@@ -175,21 +237,68 @@ export const TimetableManagementPage: React.FC = () => {
           />
         )}
 
+        {/* Add Class Modal */}
+        {showAddClassModal && isHodOrAdmin && (
+          <Card className="p-6 bg-blue-50 border-2 border-blue-200">
+            <h3 className="text-lg font-semibold text-slate-900 mb-4">Add New Class</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Class Code</label>
+                <input
+                  type="text"
+                  placeholder="e.g., CS, IT, EC"
+                  value={newClassData.classCode}
+                  onChange={(e) =>
+                    setNewClassData({ ...newClassData, classCode: e.target.value.toUpperCase() })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Class Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Computer Science Year 1"
+                  value={newClassData.className}
+                  onChange={(e) =>
+                    setNewClassData({ ...newClassData, className: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleAddClass}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+                >
+                  Create Class
+                </button>
+                <button
+                  onClick={() => setShowAddClassModal(false)}
+                  className="flex-1 px-4 py-2 bg-slate-300 text-slate-900 rounded-lg hover:bg-slate-400 font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* Class Selector */}
         <Card className="p-6">
           <h3 className="font-semibold text-slate-900 mb-4">Select Class</h3>
-          <div className="flex gap-3">
-            {CLASSES.map((classCode) => (
+          <div className="flex gap-3 flex-wrap">
+            {classes.map((classInfo) => (
               <button
-                key={classCode}
-                onClick={() => setSelectedClass(classCode)}
+                key={classInfo.classCode}
+                onClick={() => setSelectedClass(classInfo.classCode)}
                 className={`px-6 py-2 rounded-lg font-medium transition-all ${
-                  selectedClass === classCode
+                  selectedClass === classInfo.classCode
                     ? 'bg-blue-600 text-white shadow-lg'
                     : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
                 }`}
               >
-                {classCode}
+                {classInfo.classCode}
               </button>
             ))}
           </div>
@@ -295,9 +404,9 @@ export const TimetableManagementPage: React.FC = () => {
                           ) : timetable ? (
                             <div className="bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
                               <p className="font-medium text-sm text-slate-900">
-                                {timetable.subjectName}
+                                {timetable.subjectCode}
                               </p>
-                              <p className="text-xs text-slate-600">{timetable.staffName}</p>
+                              <p className="text-xs text-slate-600">{timetable.staffId}</p>
                               <div className="flex gap-1 pt-1">
                                 <button
                                   onClick={() => handleEditStart(day.order, period.number, timetable)}
@@ -338,6 +447,9 @@ export const TimetableManagementPage: React.FC = () => {
         <Card className="p-6 bg-slate-50">
           <h3 className="font-semibold text-slate-900 mb-3">📋 How to Use</h3>
           <ul className="space-y-2 text-sm text-slate-700">
+            <li>
+              • <strong>Click "Add New Class"</strong> (HOD/Admin only) to create new classes
+            </li>
             <li>
               • <strong>Click "Add Class"</strong> on any empty slot to add a new timetable entry
             </li>

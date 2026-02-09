@@ -5,6 +5,10 @@ export interface User {
   username: string
   email: string
   staffId: string  // Staff ID (e.g., "STAFF001")
+  firstName?: string
+  lastName?: string
+  phone?: string
+  department?: string
   roles: string[]
 }
 

@@ -15,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -63,6 +65,7 @@ public class AttendanceService {
                         .attendanceDate(date)
                         .status(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()))
                         .dayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"))
+                        .meetingHours(attendanceMarkDTO.getMeetingHours() != null ? new java.util.HashSet<>(attendanceMarkDTO.getMeetingHours()) : new java.util.HashSet<>())
                         .remarks(attendanceMarkDTO.getRemarks())
                         .build();
                 log.info("Created new attendance record with status: {}", attendance.getStatus());
@@ -70,6 +73,9 @@ public class AttendanceService {
                 log.info("Updating existing attendance from status {} to {}", attendance.getStatus(), attendanceMarkDTO.getStatus());
                 attendance.setStatus(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()));
                 attendance.setDayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"));
+                if (attendanceMarkDTO.getMeetingHours() != null) {
+                    attendance.setMeetingHours(new java.util.HashSet<>(attendanceMarkDTO.getMeetingHours()));
+                }
                 attendance.setRemarks(attendanceMarkDTO.getRemarks());
             }
             
@@ -77,51 +83,67 @@ public class AttendanceService {
             log.info("Saved attendance with final status: {}", savedAttendance.getStatus());
             results.add(mapToDTO(savedAttendance));
             
-            // If marked absent, trigger alteration process
-            if (savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
-                triggerAlterationProcess(staff, date, savedAttendance.getDayType());
+            // If marked absent or meeting, trigger alteration process
+            if (savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) ||
+                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
+                triggerAlterationProcess(staff, date, savedAttendance);
             }
         }
         
         return results.isEmpty() ? null : results.get(0);
     }
     
-    private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance.DayType dayType) {
-        log.info("Triggering alteration process for staff: {} on date: {}, dayType: {}", staff.getStaffId(), date, dayType);
+    private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance attendance) {
+        log.info("Triggering alteration process for staff: {} on date: {}, status: {}", 
+                 staff.getStaffId(), date, attendance.getStatus());
         
         // Get all timetables for this staff
         List<Timetable> timetables = timetableRepository.findByStaffId(staff.getId());
         
-        // Filter timetables based on dayType
-        List<Timetable> filteredTimetables = timetables.stream()
-                .filter(timetable -> shouldProcessTimetable(timetable.getPeriodNumber(), dayType))
-                .collect(Collectors.toList());
+        // Determine which periods need alteration
+        java.util.Set<Integer> periodsThatNeedAlteration = getPeriodsThatNeedAlteration(attendance);
         
-        log.info("Processing {} timetables (filtered from {}) for dayType: {}", 
-                 filteredTimetables.size(), timetables.size(), dayType);
+        log.info("Processing {} timetables for periods: {}", timetables.size(), periodsThatNeedAlteration);
         
         // Process alteration for each relevant timetable
-        for (Timetable timetable : filteredTimetables) {
-            alterationService.processAlteration(timetable, date);
+        for (Timetable timetable : timetables) {
+            if (periodsThatNeedAlteration.contains(timetable.getPeriodNumber())) {
+                alterationService.processAlteration(timetable, date);
+            }
         }
     }
     
     /**
-     * Determine if a timetable period should be processed based on dayType
-     * Periods 1-2 are morning (9:00 AM - 1:00 PM)
-     * Periods 3-5 are afternoon (1:00 PM - 5:00 PM)
+     * Determine which periods need alteration based on attendance status
      */
-    private boolean shouldProcessTimetable(Integer periodNumber, Attendance.DayType dayType) {
-        if (dayType == Attendance.DayType.FULL_DAY) {
-            return true; // All periods affected
-        } else if (dayType == Attendance.DayType.MORNING_ONLY) {
-            // Periods 1-2 are morning (9:00 AM - 1:00 PM)
-            return periodNumber != null && periodNumber <= 2;
-        } else if (dayType == Attendance.DayType.AFTERNOON_ONLY) {
-            // Periods 3-5 are afternoon (1:00 PM - 5:00 PM)
-            return periodNumber != null && periodNumber >= 3;
+    private java.util.Set<Integer> getPeriodsThatNeedAlteration(Attendance attendance) {
+        java.util.Set<Integer> periods = new java.util.HashSet<>();
+        
+        if (attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
+            // For ABSENT, alteration needed for all assigned periods based on dayType
+            if (attendance.getDayType().equals(Attendance.DayType.FULL_DAY)) {
+                // All periods 1-6
+                for (int i = 1; i <= 6; i++) {
+                    periods.add(i);
+                }
+            } else if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
+                // Morning periods: 1-2 (9AM-1PM)
+                periods.add(1);
+                periods.add(2);
+            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                // Afternoon periods: 3-5 (1PM-5PM)
+                periods.add(3);
+                periods.add(4);
+                periods.add(5);
+            }
+        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
+            // For MEETING, alteration needed only for specified meeting hours
+            if (attendance.getMeetingHours() != null && !attendance.getMeetingHours().isEmpty()) {
+                periods.addAll(attendance.getMeetingHours());
+            }
         }
-        return false;
+        
+        return periods;
     }
     
     public AttendanceDTO getAttendance(Long attendanceId) {

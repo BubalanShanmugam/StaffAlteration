@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Menu, X, BarChart3, Calendar, Settings, Clock, Users, FileText, BookOpen } from 'lucide-react'
+import { LogOut, Menu, X, BarChart3, Calendar, Settings, Clock, Users, FileText, BookOpen, Home } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
+import { ProfileModal } from './ProfileModal'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -11,6 +12,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const handleLogout = () => {
     clearAuth()
@@ -20,6 +22,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Menu items vary by role
   const getMenuItems = () => {
     const commonItems = [
+      { icon: Home, label: 'Dashboard', path: '/dashboard' },
       { icon: Clock, label: 'Mark Attendance', path: '/attendance' },
       { icon: BarChart3, label: 'Alterations', path: '/alterations' },
       { icon: Calendar, label: 'Timetable', path: '/timetables' },
@@ -97,12 +100,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
           <h2 className="text-2xl font-bold text-slate-900">Staff Alteration System</h2>
           <div className="flex items-center gap-4">
-            <div className="text-right">
+            <button
+              onClick={() => setProfileOpen(true)}
+              className="text-right hover:bg-slate-100 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+            >
               <p className="text-sm font-medium text-slate-900">{user?.username}</p>
               <p className="text-xs text-slate-500">{user?.email}</p>
-            </div>
+            </button>
           </div>
         </div>
+
+        {/* Profile Modal */}
+        <ProfileModal isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
 
         {/* Page Content */}
         <div className="flex-1 overflow-auto">

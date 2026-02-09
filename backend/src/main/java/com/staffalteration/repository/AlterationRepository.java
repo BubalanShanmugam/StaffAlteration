@@ -14,6 +14,7 @@ public interface AlterationRepository extends JpaRepository<Alteration, Long> {
     List<Alteration> findByAlterationDate(LocalDate date);
     List<Alteration> findByTimetableId(Long timetableId);
     List<Alteration> findByOriginalStaffId(Long originalStaffId);
+    List<Alteration> findByOriginalStaffIdIn(List<Long> originalStaffIds);
     List<Alteration> findBySubstituteStaffId(Long substituteStaffId);
     List<Alteration> findByStatus(Alteration.AlterationStatus status);
     

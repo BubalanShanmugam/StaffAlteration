@@ -75,5 +75,44 @@ public class AlterationController {
         }
     }
     
+    @PutMapping("/{alterationId}/reject")
+    public ResponseEntity<ApiResponseDTO<?>> rejectAlteration(@PathVariable Long alterationId) {
+        log.info("Rejecting alteration: {}", alterationId);
+        
+        try {
+            var alteration = alterationService.rejectAlteration(alterationId);
+            return ResponseEntity.ok(new ApiResponseDTO<>(200, "Alteration rejected. Finding new substitute...", alteration));
+        } catch (Exception e) {
+            log.error("Error rejecting alteration: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(new ApiResponseDTO<>(500, "Error: " + e.getMessage()));
+        }
+    }
+    
+    @GetMapping("/department/{departmentId}")
+    public ResponseEntity<ApiResponseDTO<?>> getAlterationsByDepartment(@PathVariable Long departmentId) {
+        log.info("Fetching alterations for department: {}", departmentId);
+        
+        try {
+            List<AlterationDTO> response = alterationService.getAlterationsByDepartment(departmentId);
+            return ResponseEntity.ok(new ApiResponseDTO<>(200, "Alterations retrieved", response));
+        } catch (Exception e) {
+            log.error("Error fetching alterations by department: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(new ApiResponseDTO<>(500, "Error: " + e.getMessage()));
+        }
+    }
+    
+    @PutMapping("/{alterationId}/mark-completed")
+    public ResponseEntity<ApiResponseDTO<?>> markCompleted(@PathVariable Long alterationId) {
+        log.info("Marking alteration as completed: {}", alterationId);
+        
+        try {
+            var alteration = alterationService.updateAlterationStatus(alterationId, "COMPLETED");
+            return ResponseEntity.ok(new ApiResponseDTO<>(200, "Alteration marked as completed", alteration));
+        } catch (Exception e) {
+            log.error("Error marking alteration as completed: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(new ApiResponseDTO<>(500, "Error: " + e.getMessage()));
+        }
+    }
+    
     private static final String[] DAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 }

@@ -27,6 +27,8 @@ export const AlterationDashboardPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'as-original' | 'as-substitute'>('as-original')
   const [showDetails, setShowDetails] = useState<number | null>(null)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     loadAlterations()
@@ -44,6 +46,33 @@ export const AlterationDashboardPage: React.FC = () => {
       setLoading(false)
     }
   }
+
+  const handleReject = async (alterationId: number) => {
+    if (!confirm('Are you sure you want to reject this alteration? The system will find another substitute.')) {
+      return
+    }
+
+    try {
+      await alterationAPI.reject(alterationId)
+      setSuccess('✅ Alteration rejected! Finding new substitute...')
+      setTimeout(() => {
+        loadAlterations()
+        setSuccess(null)
+      }, 2000)
+    } catch (err: any) {
+      setError('Failed to reject alteration')
+    }
+  }
+
+  // Get unique dates from alterations and sort them
+  const uniqueDates = Array.from(
+    new Set(alterations.map((alt) => alt.alterationDate))
+  ).sort()
+
+  // Filter alterations by selected date
+  const filteredAlterations = selectedDate
+    ? alterations.filter((alt) => alt.alterationDate === selectedDate)
+    : alterations
 
   const handleAcknowledge = async (alterationId: number) => {
     try {
@@ -97,6 +126,15 @@ export const AlterationDashboardPage: React.FC = () => {
           />
         )}
 
+        {success && (
+          <Alert
+            type="success"
+            title="Success"
+            message={success}
+            onClose={() => setSuccess(null)}
+          />
+        )}
+
         {/* Tabs */}
         <div className="flex gap-2 border-b border-slate-200">
           <button
@@ -121,6 +159,36 @@ export const AlterationDashboardPage: React.FC = () => {
           </button>
         </div>
 
+        {/* Date Filter Dropdown */}
+        {uniqueDates.length > 0 && (
+          <Card className="p-4">
+            <div className="flex items-center justify-between gap-4">
+              <label className="font-medium text-slate-700">Filter by Date:</label>
+              <select
+                value={selectedDate || ''}
+                onChange={(e) => setSelectedDate(e.target.value || null)}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Dates ({alterations.length} alterations)</option>
+                {uniqueDates.map((date) => {
+                  const count = alterations.filter((alt) => alt.alterationDate === date).length
+                  return (
+                    <option key={date} value={date}>
+                      {new Date(date).toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}{' '}
+                      ({count} alterations)
+                    </option>
+                  )
+                })}
+              </select>
+            </div>
+          </Card>
+        )}
+
         {/* Content */}
         {loading ? (
           <Card className="p-12 text-center">
@@ -136,9 +204,16 @@ export const AlterationDashboardPage: React.FC = () => {
                 : 'No substitute assignments'}
             </p>
           </Card>
+        ) : filteredAlterations.length === 0 ? (
+          <Card className="p-12 text-center">
+            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <p className="text-slate-600 font-medium">
+              No alterations for the selected date
+            </p>
+          </Card>
         ) : (
           <div className="space-y-4">
-            {alterations.map((alteration) => (
+            {filteredAlterations.map((alteration) => (
               <Card
                 key={alteration.id}
                 className={`p-6 border-l-4 ${
@@ -237,14 +312,24 @@ export const AlterationDashboardPage: React.FC = () => {
 
                         {activeTab === 'as-substitute' &&
                           alteration.status === 'ASSIGNED' && (
-                            <Button
-                              size="sm"
-                              className="gap-2"
-                              onClick={() => handleAcknowledge(alteration.id)}
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                              Acknowledge
-                            </Button>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                className="gap-2"
+                                onClick={() => handleAcknowledge(alteration.id)}
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                                Acknowledge
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                className="gap-2"
+                                onClick={() => handleReject(alteration.id)}
+                              >
+                                ❌ Reject
+                              </Button>
+                            </div>
                           )}
                       </div>
                     </div>

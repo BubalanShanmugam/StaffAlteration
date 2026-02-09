@@ -35,31 +35,48 @@ public class AlterationService {
     @Autowired
     private NotificationService notificationService;
     
+    @Autowired
+    private EmailService emailService;
+    
     private static final int PERIODS_PER_DAY = 6;
     private static final int DAY_ORDERS = 6;
     
     /**
      * Main alteration algorithm: Apply strict priority-driven rules
      * Priority Order:
-     * 1. Staff must be present today
-     * 2. Staff already teaches the same class
-     * 3. Staff with least number of hours that day
-     * 4. Staff with no previous or next period clash
-     * 5. Prefer same subject, else other subject
-     * 6. Tie-breaker: least weekly workload
+     * 1. Staff who is present
+     * 2. Staff from same department
+     * 3. Staff who don't have before and after continuous hours
+     * 4. Staff with minimum number of hours comparing to all sorted staff
      */
     public Alteration processAlteration(Timetable timetable, LocalDate alterationDate) {
         log.info("Processing alteration for timetable: {}, date: {}", timetable.getId(), alterationDate);
         
         Staff originalStaff = timetable.getStaff();
         
-        // Check if staff is absent on alteration date
+        // Check if staff is absent or in meeting on alteration date
         Attendance attendance = attendanceRepository.findByStaffIdAndAttendanceDate(originalStaff.getId(), alterationDate)
                 .orElse(null);
         
-        if (attendance == null || !attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
-            log.warn("Staff {} is not absent on {}", originalStaff.getStaffId(), alterationDate);
+        if (attendance == null) {
+            log.warn("No attendance record for staff {} on {}", originalStaff.getStaffId(), alterationDate);
             return null;
+        }
+        
+        boolean needsAlteration = attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) ||
+                                 attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING);
+        
+        if (!needsAlteration) {
+            log.debug("Staff {} is not absent/meeting on {}", originalStaff.getStaffId(), alterationDate);
+            return null;
+        }
+        
+        // For MEETING status, check if this period is affected
+        if (attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
+            if (!attendance.getMeetingHours().contains(timetable.getPeriodNumber())) {
+                log.debug("Period {} is not affected by meeting", timetable.getPeriodNumber());
+                return null;
+            }
         }
         
         // Find candidate substitute
@@ -87,95 +104,108 @@ public class AlterationService {
         // Update workload summary for substitute
         updateWorkloadSummary(substituteStaff, alterationDate);
         
-        // Send notification
+        // Send in-app notification
         notificationService.notifySubstituteStaff(savedAlteration);
+        
+        // Send email notifications to both staff members
+        emailService.sendAlterationNotification(savedAlteration);
         
         return savedAlteration;
     }
     
     /**
      * Find the best substitute staff based on priority rules
+     * Priority 1: Staff who is present
+     * Priority 2: Staff from same department
+     * Priority 3: Staff who don't have before/after continuous hours
+     * Priority 4: Staff with minimum number of hours
      */
     private Staff findSubstitute(Timetable timetable, LocalDate alterationDate) {
         List<Staff> allStaff = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
         
-        // Priority 1: Staff must be present today
+        // Remove the original staff from candidates
+        allStaff.remove(timetable.getStaff());
+        
+        if (allStaff.isEmpty()) {
+            log.warn("No active staff available for substitution");
+            return null;
+        }
+        
+        // PRIORITY 1: Filter for staff who are PRESENT (or don't have attendance marked)
         List<Staff> presentStaff = allStaff.stream()
                 .filter(staff -> {
                     Attendance att = attendanceRepository.findByStaffIdAndAttendanceDate(staff.getId(), alterationDate)
                             .orElse(null);
+                    // Staff is present if: no attendance marked OR explicitly marked PRESENT
                     return att == null || att.getStatus().equals(Attendance.AttendanceStatus.PRESENT);
                 })
                 .collect(Collectors.toList());
         
         if (presentStaff.isEmpty()) {
-            log.warn("No present staff available for alteration");
+            log.warn("No present staff available for period {}", timetable.getPeriodNumber());
             return null;
         }
         
-        // Remove the original staff from candidates
-        presentStaff.remove(timetable.getStaff());
-        
-        // Check for existing allocations (avoid double allocation)
+        // Filter out staff already allocated for this exact period
         List<Staff> availableStaff = presentStaff.stream()
-                .filter(staff -> !isAlreadyAllocated(staff, timetable, alterationDate))
+                .filter(staff -> !isAlreadyAllocatedForPeriod(staff, timetable, alterationDate))
                 .collect(Collectors.toList());
         
         if (availableStaff.isEmpty()) {
-            log.warn("All available staff are already allocated for this period");
-            return null; // No available staff for allocation
+            log.warn("All present staff already allocated for period {}", timetable.getPeriodNumber());
+            return presentStaff.get(0); // Fallback
         }
         
-        // Priority 2: Staff already teaches the same class
-        List<Staff> sameClassStaff = availableStaff.stream()
-                .filter(staff -> teachesSameClass(staff, timetable.getClassRoom()))
+        // PRIORITY 2: Filter for same department
+        List<Staff> sameDepartmentStaff = availableStaff.stream()
+                .filter(staff -> staff.getDepartment().equals(timetable.getStaff().getDepartment()))
                 .collect(Collectors.toList());
         
-        if (!sameClassStaff.isEmpty()) {
-            return selectBestStaff(sameClassStaff, timetable, alterationDate);
-        }
+        List<Staff> candidateList = sameDepartmentStaff.isEmpty() ? availableStaff : sameDepartmentStaff;
         
-        // If no same class, use all available staff
-        return selectBestStaff(availableStaff, timetable, alterationDate);
+        // PRIORITY 3 & 4: Select best based on continuous hours and total hours
+        return selectBestStaff(candidateList, timetable, alterationDate);
     }
     
     /**
-     * Select the best staff based on remaining priority rules
+     * Select the best staff based on remaining priorities
+     * Priority 3: Staff without before/after continuous hours
+     * Priority 4: Staff with minimum total hours
      */
     private Staff selectBestStaff(List<Staff> candidates, Timetable timetable, LocalDate alterationDate) {
-        return candidates.stream()
-                .map(staff -> new StaffScore(staff, calculateScore(staff, timetable, alterationDate)))
-                .min(Comparator.comparingDouble(StaffScore::getScore))
-                .map(StaffScore::getStaff)
-                .orElse(null);
+        // Score each candidate (lower is better)
+        List<StaffScore> scores = candidates.stream()
+                .map(staff -> {
+                    double score = calculateScore(staff, timetable, alterationDate);
+                    return new StaffScore(staff, score);
+                })
+                .sorted(Comparator.comparingDouble(StaffScore::getScore))
+                .collect(Collectors.toList());
+        
+        if (scores.isEmpty()) {
+            return null;
+        }
+        
+        log.debug("Top candidate for period {}: {}", timetable.getPeriodNumber(), scores.get(0).getStaff().getStaffId());
+        return scores.get(0).getStaff();
     }
     
     /**
      * Calculate score for staff (lower is better)
-     * Score = (hoursToday * 1000) + (hasClash ? 500 : 0) + (subjectMatch ? 0 : 100) + (weeklyWorkload)
+     * Score = (hasContinuousHours ? 1000 : 0) + (totalHours * 100)
      */
     private double calculateScore(Staff staff, Timetable timetable, LocalDate alterationDate) {
         double score = 0;
         
-        // Priority 3: Staff with least number of hours that day
-        int hoursToday = countHoursForStaffOnDate(staff, alterationDate);
-        score += hoursToday * 1000;
-        
-        // Priority 4: Staff with no previous or next period clash
-        boolean hasClash = hasConsecutiveClash(staff, timetable, alterationDate);
-        if (hasClash) {
-            score += 500;
+        // Priority 3: Check for continuous hours (before/after clash)
+        boolean hasContinuousClash = hasConsecutiveClash(staff, timetable, alterationDate);
+        if (hasContinuousClash) {
+            score += 1000; // Heavy penalty for continuous hours
         }
         
-        // Priority 5: Prefer same subject
-        boolean sameSubject = timetable.getSubject().getId().equals(getStaffSubjectForClass(staff, timetable.getClassRoom()));
-        if (!sameSubject) {
-            score += 100;
-        }
-        
-        // Priority 6: Tie-breaker - least weekly workload
-        int weeklyWorkload = getWeeklyWorkload(staff);
-        score += weeklyWorkload;
+        // Priority 4: Total hours assigned to staff on this date
+        int hoursOnDate = countHoursForStaffOnDate(staff, alterationDate);
+        score += hoursOnDate * 100;
         
         return score;
     }
@@ -249,13 +279,13 @@ public class AlterationService {
     }
     
     /**
-     * Check if staff is already allocated for this period
+     * Check if staff is already allocated for this specific period on this date
      */
-    private boolean isAlreadyAllocated(Staff staff, Timetable timetable, LocalDate alterationDate) {
-        List<Alteration> alterations = alterationRepository.findByTimetableAndDate(
-                timetable.getId(), alterationDate);
+    private boolean isAlreadyAllocatedForPeriod(Staff staff, Timetable timetable, LocalDate alterationDate) {
+        List<Alteration> alterations = alterationRepository.findByAlterationDate(alterationDate);
         return alterations.stream()
-                .anyMatch(a -> a.getSubstituteStaff().getId().equals(staff.getId()));
+                .anyMatch(a -> a.getSubstituteStaff().getId().equals(staff.getId()) &&
+                             a.getTimetable().getPeriodNumber().equals(timetable.getPeriodNumber()));
     }
     
     /**
@@ -312,6 +342,25 @@ public class AlterationService {
                 .collect(Collectors.toList());
     }
     
+    public List<AlterationDTO> getAlterationsByDepartment(Long departmentId) {
+        log.info("Fetching alterations for department: {}", departmentId);
+        
+        // Get all staff in the department
+        List<Staff> deptStaff = staffRepository.findByDepartmentId(departmentId);
+        List<Long> staffIds = deptStaff.stream().map(Staff::getId).collect(Collectors.toList());
+        
+        if (staffIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        // Get all alterations where original staff is from this department
+        List<Alteration> alterations = alterationRepository.findByOriginalStaffIdIn(staffIds);
+        
+        return alterations.stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+    }
+    
     public AlterationDTO updateAlterationStatus(Long alterationId, String status) {
         Alteration alteration = alterationRepository.findById(alterationId)
                 .orElseThrow(() -> new RuntimeException("Alteration not found"));
@@ -319,6 +368,58 @@ public class AlterationService {
         alteration.setStatus(Alteration.AlterationStatus.valueOf(status));
         Alteration saved = alterationRepository.save(alteration);
         return mapToDTO(saved);
+    }
+    
+    public AlterationDTO rejectAlteration(Long alterationId) {
+        log.info("Processing rejection for alteration: {}", alterationId);
+        
+        Alteration alteration = alterationRepository.findById(alterationId)
+                .orElseThrow(() -> new RuntimeException("Alteration not found"));
+        
+        // Mark current alteration as rejected
+        alteration.setStatus(Alteration.AlterationStatus.REJECTED);
+        alterationRepository.save(alteration);
+        
+        // Find a new substitute (excluding the previously rejected staff)
+        Staff previousSubstitute = alteration.getSubstituteStaff();
+        Timetable timetable = alteration.getTimetable();
+        LocalDate alterationDate = alteration.getAlterationDate();
+        
+        // Get all staff except original and previous substitute
+        List<Staff> allStaff = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
+        allStaff.remove(timetable.getStaff());
+        allStaff.remove(previousSubstitute);
+        
+        if (allStaff.isEmpty()) {
+            log.warn("No alternative substitutes available for alteration: {}", alterationId);
+            return mapToDTO(alteration);
+        }
+        
+        // Find a new substitute with revised criteria
+        Staff newSubstitute = selectBestStaff(allStaff, timetable, alterationDate);
+        
+        if (newSubstitute != null) {
+            // Create new alteration with the new substitute
+            Alteration newAlteration = Alteration.builder()
+                    .timetable(timetable)
+                    .originalStaff(alteration.getOriginalStaff())
+                    .substituteStaff(newSubstitute)
+                    .alterationDate(alterationDate)
+                    .status(Alteration.AlterationStatus.ASSIGNED)
+                    .remarks("Re-assigned after rejection of: " + previousSubstitute.getStaffId())
+                    .build();
+            
+            Alteration savedNewAlteration = alterationRepository.save(newAlteration);
+            log.info("New alteration created after rejection: {}", savedNewAlteration.getId());
+            
+            // Send notifications
+            notificationService.notifySubstituteStaff(savedNewAlteration);
+            emailService.sendAlterationNotification(savedNewAlteration);
+            
+            return mapToDTO(savedNewAlteration);
+        }
+        
+        return mapToDTO(alteration);
     }
     
     private AlterationDTO mapToDTO(Alteration alteration) {

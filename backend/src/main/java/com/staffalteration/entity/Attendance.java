@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "attendance", uniqueConstraints = {
@@ -41,6 +43,11 @@ public class Attendance {
     @Column(length = 500)
     private String remarks;
     
+    @ElementCollection
+    @CollectionTable(name = "attendance_meeting_hours", joinColumns = @JoinColumn(name = "attendance_id"))
+    @Column(name = "period_number")
+    private Set<Integer> meetingHours; // For MEETING status: which periods the staff will be in meeting
+    
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
     
@@ -57,6 +64,9 @@ public class Attendance {
         if (dayType == null) {
             dayType = DayType.FULL_DAY;
         }
+        if (meetingHours == null) {
+            meetingHours = new HashSet<>();
+        }
     }
     
     @PreUpdate
@@ -67,7 +77,8 @@ public class Attendance {
     public enum AttendanceStatus {
         PRESENT,
         ABSENT,
-        LEAVE
+        LEAVE,
+        MEETING
     }
     
     public enum DayType {
