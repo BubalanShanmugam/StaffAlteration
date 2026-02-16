@@ -5,17 +5,25 @@ import com.staffalteration.dto.AttendanceMarkDTO;
 import com.staffalteration.entity.Attendance;
 import com.staffalteration.entity.Staff;
 import com.staffalteration.entity.Timetable;
+import com.staffalteration.entity.LessonPlan;
+import com.staffalteration.entity.ClassRoom;
+import com.staffalteration.entity.Subject;
+import com.staffalteration.entity.Alteration;
 import com.staffalteration.repository.AttendanceRepository;
 import com.staffalteration.repository.StaffRepository;
 import com.staffalteration.repository.TimetableRepository;
+import com.staffalteration.repository.LessonPlanRepository;
+import com.staffalteration.repository.ClassRoomRepository;
+import com.staffalteration.repository.SubjectRepository;
+import com.staffalteration.repository.AlterationRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -35,10 +43,19 @@ public class AttendanceService {
     private TimetableRepository timetableRepository;
     
     @Autowired
-    private AlterationService alterationService;
+    private AlterationRepository alterationRepository;
     
     @Autowired
-    private NotificationService notificationService;
+    private LessonPlanRepository lessonPlanRepository;
+    
+    @Autowired
+    private ClassRoomRepository classRoomRepository;
+    
+    @Autowired
+    private SubjectRepository subjectRepository;
+    
+    @Autowired
+    private AlterationService alterationService;
     
     public AttendanceDTO markAttendance(AttendanceMarkDTO attendanceMarkDTO) {
         log.info("Marking attendance for staff: {}, date: {}, status: {}", 
@@ -60,66 +77,144 @@ public class AttendanceService {
             Attendance attendance = attendanceRepository.findByStaffIdAndAttendanceDate(staff.getId(), date).orElse(null);
             
             if (attendance == null) {
+                // Determine which periods to store
+                Set<Integer> periodsToStore = attendanceMarkDTO.getSelectedPeriods();
+                if (periodsToStore == null || periodsToStore.isEmpty()) {
+                    periodsToStore = attendanceMarkDTO.getMeetingHours();
+                }
+                
                 attendance = Attendance.builder()
                         .staff(staff)
                         .attendanceDate(date)
                         .status(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()))
                         .dayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"))
-                        .meetingHours(attendanceMarkDTO.getMeetingHours() != null ? new java.util.HashSet<>(attendanceMarkDTO.getMeetingHours()) : new java.util.HashSet<>())
+                        .meetingHours(periodsToStore != null ? new java.util.HashSet<>(periodsToStore) : new java.util.HashSet<>())
                         .remarks(attendanceMarkDTO.getRemarks())
                         .build();
-                log.info("Created new attendance record with status: {}", attendance.getStatus());
+                log.info("Created new attendance record with status: {}, periods: {}", attendance.getStatus(), periodsToStore);
             } else {
                 log.info("Updating existing attendance from status {} to {}", attendance.getStatus(), attendanceMarkDTO.getStatus());
                 attendance.setStatus(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()));
                 attendance.setDayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"));
-                if (attendanceMarkDTO.getMeetingHours() != null) {
-                    attendance.setMeetingHours(new java.util.HashSet<>(attendanceMarkDTO.getMeetingHours()));
+                
+                // Handle selected periods or meeting hours
+                Set<Integer> periodsToStore = attendanceMarkDTO.getSelectedPeriods();
+                if (periodsToStore == null || periodsToStore.isEmpty()) {
+                    periodsToStore = attendanceMarkDTO.getMeetingHours();
                 }
+                
+                if (periodsToStore != null) {
+                    attendance.setMeetingHours(new java.util.HashSet<>(periodsToStore));
+                } else if (attendance.getMeetingHours() == null) {
+                    attendance.setMeetingHours(new java.util.HashSet<>());
+                }
+                
                 attendance.setRemarks(attendanceMarkDTO.getRemarks());
+                
+                // Cancel existing alterations if status changed
+                if (!attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE) &&
+                    !attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY) &&
+                    !attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) &&
+                    !attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING) &&
+                    !attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
+                    cancelExistingAlterations(staff, date);
+                }
             }
             
             Attendance savedAttendance = attendanceRepository.save(attendance);
             log.info("Saved attendance with final status: {}", savedAttendance.getStatus());
             results.add(mapToDTO(savedAttendance));
             
-            // If marked absent or meeting, trigger alteration process
-            if (savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) ||
-                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
-                triggerAlterationProcess(staff, date, savedAttendance);
+            // If marked as leave, absent, on duty, period-wise absent or meeting, trigger alteration process
+            if (savedAttendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE) ||
+                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY) ||
+                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) ||
+                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.MEETING) ||
+                savedAttendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
+                
+                Set<Integer> periodsToProcess = attendanceMarkDTO.getSelectedPeriods();
+                if (periodsToProcess == null || periodsToProcess.isEmpty()) {
+                    periodsToProcess = attendanceMarkDTO.getAbsentPeriods();
+                }
+                
+                triggerAlterationProcess(staff, date, savedAttendance, periodsToProcess);
             }
         }
         
         return results.isEmpty() ? null : results.get(0);
     }
     
-    private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance attendance) {
+    private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance attendance, Set<Integer> absentPeriods) {
         log.info("Triggering alteration process for staff: {} on date: {}, status: {}", 
                  staff.getStaffId(), date, attendance.getStatus());
         
-        // Get all timetables for this staff
+        // Get day of week (1=Monday, 7=Sunday in Java DayOfWeek)
+        int dayOfWeek = date.getDayOfWeek().getValue(); // 1=Monday, 7=Sunday
+        
+        // Get all timetables for this staff on this day of week
         List<Timetable> timetables = timetableRepository.findByStaffId(staff.getId());
+        List<Timetable> timetablesForToday = new ArrayList<>();
+        
+        for (Timetable timetable : timetables) {
+            Integer tableDay = timetable.getDayOrder();
+            if (tableDay != null && tableDay.equals(dayOfWeek)) {
+                timetablesForToday.add(timetable);
+            }
+        }
         
         // Determine which periods need alteration
-        java.util.Set<Integer> periodsThatNeedAlteration = getPeriodsThatNeedAlteration(attendance);
+        java.util.Set<Integer> periodsThatNeedAlteration = getPeriodsThatNeedAlteration(attendance, absentPeriods);
         
-        log.info("Processing {} timetables for periods: {}", timetables.size(), periodsThatNeedAlteration);
+        log.info("Processing {} timetables for date: {}, day: {}, periods: {}", 
+                 timetablesForToday.size(), date, dayOfWeek, periodsThatNeedAlteration);
         
         // Process alteration for each relevant timetable
-        for (Timetable timetable : timetables) {
+        for (Timetable timetable : timetablesForToday) {
             if (periodsThatNeedAlteration.contains(timetable.getPeriodNumber())) {
                 alterationService.processAlteration(timetable, date);
             }
         }
     }
     
+    private void cancelExistingAlterations(Staff staff, LocalDate date) {
+        log.info("Cancelling alterations for staff {} on date {}", staff.getStaffId(), date);
+        List<Alteration> existingAlterations = alterationRepository.findByOriginalStaffIdAndAlterationDate(staff.getId(), date);
+        for (Alteration alteration : existingAlterations) {
+            alteration.setStatus(Alteration.AlterationStatus.CANCELLED);
+            alterationRepository.save(alteration);
+        }
+    }
+    
     /**
-     * Determine which periods need alteration based on attendance status
+     * Determine which periods need alteration based on attendance status and specific periods
      */
-    private java.util.Set<Integer> getPeriodsThatNeedAlteration(Attendance attendance) {
+    private java.util.Set<Integer> getPeriodsThatNeedAlteration(Attendance attendance, Set<Integer> absentPeriods) {
         java.util.Set<Integer> periods = new java.util.HashSet<>();
         
-        if (attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
+        // If absentPeriods (selectedPeriods) is provided, use those directly
+        if (absentPeriods != null && !absentPeriods.isEmpty()) {
+            return new java.util.HashSet<>(absentPeriods);
+        }
+        
+        if (attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE)) {
+            // For LEAVE, alteration needed for all assigned periods based on dayType
+            if (attendance.getDayType().equals(Attendance.DayType.FULL_DAY)) {
+                // All periods 1-6
+                for (int i = 1; i <= 6; i++) {
+                    periods.add(i);
+                }
+            } else if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
+                // Morning periods: 1-4 (9AM-1PM)
+                periods.add(1);
+                periods.add(2);
+                periods.add(3);
+                periods.add(4);
+            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                // Afternoon periods: 5-6 (1PM-5PM)
+                periods.add(5);
+                periods.add(6);
+            }
+        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
             // For ABSENT, alteration needed for all assigned periods based on dayType
             if (attendance.getDayType().equals(Attendance.DayType.FULL_DAY)) {
                 // All periods 1-6
@@ -127,19 +222,43 @@ public class AttendanceService {
                     periods.add(i);
                 }
             } else if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
-                // Morning periods: 1-2 (9AM-1PM)
+                // Morning periods: 1-4 (9AM-1PM)
                 periods.add(1);
                 periods.add(2);
-            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
-                // Afternoon periods: 3-5 (1PM-5PM)
                 periods.add(3);
                 periods.add(4);
+            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                // Afternoon periods: 5-6 (1PM-5PM)
                 periods.add(5);
+                periods.add(6);
             }
         } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
             // For MEETING, alteration needed only for specified meeting hours
             if (attendance.getMeetingHours() != null && !attendance.getMeetingHours().isEmpty()) {
                 periods.addAll(attendance.getMeetingHours());
+            }
+        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY)) {
+            // For ONDUTY, alteration needed based on dayType
+            if (attendance.getDayType().equals(Attendance.DayType.FULL_DAY)) {
+                // All periods 1-6
+                for (int i = 1; i <= 6; i++) {
+                    periods.add(i);
+                }
+            } else if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
+                // Morning periods: 1-4 (9AM-1PM)
+                periods.add(1);
+                periods.add(2);
+                periods.add(3);
+                periods.add(4);
+            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                // Afternoon periods: 5-6 (1PM-5PM)
+                periods.add(5);
+                periods.add(6);
+            }
+        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
+            // For PERIOD_WISE_ABSENT, use specific periods provided
+            if (absentPeriods != null && !absentPeriods.isEmpty()) {
+                periods.addAll(absentPeriods);
             }
         }
         
@@ -147,6 +266,7 @@ public class AttendanceService {
     }
     
     public AttendanceDTO getAttendance(Long attendanceId) {
+        @SuppressWarnings("null")
         Attendance attendance = attendanceRepository.findById(attendanceId)
                 .orElseThrow(() -> new RuntimeException("Attendance not found"));
         return mapToDTO(attendance);
@@ -186,4 +306,62 @@ public class AttendanceService {
                 .updatedAt(attendance.getUpdatedAt())
                 .build();
     }
+    
+    public void uploadLessonPlans(String staffId, String classCode, Long subjectId, LocalDate lessonDate, 
+                                  String notes, MultipartFile[] files) throws Exception {
+        log.info("Uploading lesson plans for staff: {}, class: {}, date: {}", staffId, classCode, lessonDate);
+        
+        Staff staff = staffRepository.findByStaffId(staffId)
+                .orElseThrow(() -> new RuntimeException("Staff not found"));
+        
+        @SuppressWarnings("null")
+        ClassRoom classRoom = classRoomRepository.findByClassCode(classCode)
+                .orElseThrow(() -> new RuntimeException("Class not found"));
+        
+        @SuppressWarnings("null")
+        Subject subject = subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new RuntimeException("Subject not found"));
+        
+        // Upload each file
+        for (MultipartFile file : files) {
+            if (!file.isEmpty()) {
+                String uploadDir = "lesson_plans/" + staffId + "/" + classCode;
+                String fileName = System.currentTimeMillis() + "_" + file.getOriginalFilename();
+                String filePath = uploadDir + "/" + fileName;
+                
+                // Create LessonPlan record
+                LessonPlan lessonPlanToSave = LessonPlan.builder()
+                        .staff(staff)
+                        .classRoom(classRoom)
+                        .subject(subject)
+                        .lessonDate(lessonDate)
+                        .filePath(filePath)
+                        .originalFileName(file.getOriginalFilename())
+                        .notes(notes)
+                        .fileType(file.getContentType())
+                        .fileSize(file.getSize())
+                        .build();
+                
+                @SuppressWarnings({"null", "unused"})
+                LessonPlan result = lessonPlanRepository.save(lessonPlanToSave);
+                log.info("Lesson plan uploaded: {}", filePath);
+            }
+        }
+    }
+
+    public List<LessonPlan> getLessonPlansForAlteration(Long alterationId) {
+        @SuppressWarnings("null")
+        Alteration alteration = alterationRepository.findById(alterationId)
+                .orElseThrow(() -> new RuntimeException("Alteration not found"));
+        
+        // Get lesson plans for the original staff on the alteration date
+        Staff originalStaff = alteration.getOriginalStaff();
+        LocalDate alterationDate = alteration.getAlterationDate();
+        
+        @SuppressWarnings("null")
+        List<LessonPlan> lessonPlans = lessonPlanRepository.findByStaffIdAndLessonDate(originalStaff.getId(), alterationDate);
+        return lessonPlans;
+    }
 }
+
+

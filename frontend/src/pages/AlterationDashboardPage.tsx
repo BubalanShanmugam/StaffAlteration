@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
 import { alterationAPI } from '../api'
 import { useAuthStore } from '../store/authStore'
+import { useAlterationWebSocket } from '../hooks/useAlterationWebSocket'
 
 interface Alteration {
   id: number
@@ -16,6 +17,7 @@ interface Alteration {
   dayOrder: number
   periodNumber: number
   alterationDate: string
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
   status: string
   remarks?: string
 }
@@ -33,6 +35,24 @@ export const AlterationDashboardPage: React.FC = () => {
   useEffect(() => {
     loadAlterations()
   }, [activeTab, user])
+
+  // Set up WebSocket listeners for real-time updates
+  useAlterationWebSocket(
+    (data: Alteration) => {
+      // New alteration created
+      setAlterations((prev) => [data, ...prev])
+    },
+    (data: Alteration) => {
+      // Alteration updated
+      setAlterations((prev) =>
+        prev.map((alt) => (alt.id === data.id ? data : alt))
+      )
+    },
+    (data: Alteration) => {
+      // Alteration rejected - reload to get new assignments
+      loadAlterations()
+    }
+  )
 
   const loadAlterations = async () => {
     if (!user) return
@@ -106,6 +126,31 @@ export const AlterationDashboardPage: React.FC = () => {
   const getDayName = (dayOrder: number) => {
     const days = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     return days[dayOrder] || `Day ${dayOrder}`
+  }
+
+  const getPeriodDisplay = (alteration: Alteration) => {
+    // Map absence type to user-friendly display
+    const absenceTypeMap: { [key: string]: string } = {
+      'FN': 'Full Day Leave',
+      'AN': 'Half Day Morning Leave (9AM - 1PM)',
+      'AF': 'Half Day Afternoon Leave (1PM - 5PM)',
+      'ONDUTY': 'On Duty - Full Day',
+      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent (${getPeriodTime(alteration.periodNumber)})`
+    }
+    
+    return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber} (${getPeriodTime(alteration.periodNumber)})`
+  }
+
+  const getPeriodTime = (periodNumber: number) => {
+    const periods: { [key: number]: string } = {
+      1: '9:00-10:00',
+      2: '10:00-11:00',
+      3: '11:00-12:00',
+      4: '12:00-1:00',
+      5: '1:00-2:00',
+      6: '2:00-3:00',
+    }
+    return periods[periodNumber] || 'Unknown'
   }
 
   return (
@@ -254,7 +299,7 @@ export const AlterationDashboardPage: React.FC = () => {
                   </div>
 
                   {/* Details Row */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                     <div>
                       <p className="text-slate-500 font-medium">Date</p>
                       <p className="text-slate-900">
@@ -266,12 +311,18 @@ export const AlterationDashboardPage: React.FC = () => {
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 font-medium">Day</p>
-                      <p className="text-slate-900">{getDayName(alteration.dayOrder)}</p>
-                    </div>
-                    <div>
-                      <p className="text-slate-500 font-medium">Period</p>
-                      <p className="text-slate-900">Period {alteration.periodNumber}</p>
+                      <p className="text-slate-500 font-medium">Absence Type</p>
+                      <p className="text-slate-900 font-medium">
+                        <span className={`px-2 py-1 rounded ${
+                          alteration.absenceType === 'FN' ? 'bg-red-100 text-red-700' :
+                          alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
+                          alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
+                          alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                          'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {getPeriodDisplay(alteration)}
+                        </span>
+                      </p>
                     </div>
                     <div>
                       <p className="text-slate-500 font-medium">

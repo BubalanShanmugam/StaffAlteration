@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -72,4 +73,37 @@ public class AttendanceController {
             return ResponseEntity.status(400).body(new ApiResponseDTO<>(400, e.getMessage()));
         }
     }
+    
+    @PostMapping("/upload-lesson-plan")
+    public ResponseEntity<ApiResponseDTO<?>> uploadLessonPlan(
+            @RequestParam("staffId") String staffId,
+            @RequestParam("classCode") String classCode,
+            @RequestParam("subjectId") Long subjectId,
+            @RequestParam("lessonDate") LocalDate lessonDate,
+            @RequestParam(value = "notes", required = false) String notes,
+            @RequestParam("files") MultipartFile[] files) {
+        log.info("Uploading lesson plan for staff: {}, date: {}", staffId, lessonDate);
+        
+        try {
+            attendanceService.uploadLessonPlans(staffId, classCode, subjectId, lessonDate, notes, files);
+            return ResponseEntity.ok(new ApiResponseDTO<>(200, "Lesson plan uploaded successfully"));
+        } catch (Exception e) {
+            log.error("Error uploading lesson plan: {}", e.getMessage());
+            return ResponseEntity.status(400).body(new ApiResponseDTO<>(400, e.getMessage()));
+        }
+    }
+    
+    @GetMapping("/lesson-plans/alteration/{alterationId}")
+    public ResponseEntity<ApiResponseDTO<?>> getLessonPlansForAlteration(@PathVariable Long alterationId) {
+        log.info("Fetching lesson plans for alteration: {}", alterationId);
+        
+        try {
+            var lessonPlans = attendanceService.getLessonPlansForAlteration(alterationId);
+            return ResponseEntity.ok(new ApiResponseDTO<>(200, "Lesson plans retrieved", lessonPlans));
+        } catch (Exception e) {
+            log.error("Error fetching lesson plans: {}", e.getMessage());
+            return ResponseEntity.status(400).body(new ApiResponseDTO<>(400, e.getMessage()));
+        }
+    }
 }
+

@@ -17,8 +17,10 @@ public class AttendanceMarkDTO {
     private String staffId;
     private LocalDate attendanceDate;
     private List<LocalDate> attendanceDates; // For marking multiple days at once
-    private String status; // PRESENT, ABSENT, LEAVE, MEETING
-    private String dayType; // FULL_DAY, MORNING_ONLY, AFTERNOON_ONLY (only for LEAVE status)
+    private String status; // PRESENT, ABSENT, LEAVE, MEETING, ONDUTY, PERIOD_WISE_ABSENT
+    private String dayType; // FULL_DAY, MORNING_ONLY, AFTERNOON_ONLY (for LEAVE, ABSENT, ONDUTY)
     private Set<Integer> meetingHours; // For MEETING status: periods when staff will be in meeting
+    private Set<Integer> absentPeriods; // For PERIOD_WISE_ABSENT: specific periods
+    private Set<Integer> selectedPeriods; // For period-wise marking of any status
     private String remarks;
 }

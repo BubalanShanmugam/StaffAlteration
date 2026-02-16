@@ -13,11 +13,13 @@ import { StaffManagementPage } from './pages/StaffManagementPage'
 import { DayOrderSchedulePage } from './pages/DayOrderSchedulePage'
 import { ClassManagementPage } from './pages/ClassManagementPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/dashboard"
@@ -102,6 +104,7 @@ function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }
 

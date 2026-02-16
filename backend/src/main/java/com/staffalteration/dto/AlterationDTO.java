@@ -24,9 +24,11 @@ public class AlterationDTO {
     private Integer dayOrder;
     private Integer periodNumber;
     private LocalDate alterationDate;
+    private String absenceType; // FN, AN, AF
     private String status;
     private Long lessonPlanId;
     private String remarks;
+    private Long departmentId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

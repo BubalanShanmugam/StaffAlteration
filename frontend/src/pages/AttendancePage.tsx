@@ -1,37 +1,43 @@
 import React, { useState } from 'react'
-import { Calendar, FileText, AlertCircle, CheckCircle, Clock, Briefcase } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Calendar, FileText, AlertCircle, Briefcase, ArrowRight, CheckCircle, Clock } from 'lucide-react'
 import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
-import { attendanceAPI } from '../api'
+import { attendanceAPI, alterationAPI } from '../api'
 import { useAuthStore } from '../store/authStore'
 
 export const AttendancePage: React.FC = () => {
   const user = useAuthStore((state) => state.user)
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [createdAlterationCount, setCreatedAlterationCount] = useState(0)
   const [showMultipleDays, setShowMultipleDays] = useState(false)
   const [notes, setNotes] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [selectedMeetingHours, setSelectedMeetingHours] = useState<Set<number>>(new Set())
+  const [selectedPeriods, setSelectedPeriods] = useState<Set<number>>(new Set())
+  const [usePeriodWiseMarking, setUsePeriodWiseMarking] = useState(false)
   
   const [formData, setFormData] = useState({
-    status: 'PRESENT' as 'PRESENT' | 'ABSENT' | 'LEAVE' | 'MEETING',
+    status: 'LEAVE' as 'LEAVE' | 'ONDUTY' | 'MEETING',
     dayType: 'FULL_DAY' as 'FULL_DAY' | 'MORNING_ONLY' | 'AFTERNOON_ONLY',
     attendanceDate: new Date().toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
     remarks: '',
   })
 
-  // Period numbers for meeting selection (1-6)
+  // Period numbers for selection (1-6)
   const periods = [1, 2, 3, 4, 5, 6]
   const periodLabels: Record<number, string> = {
     1: 'Period 1 (9:00-10:00)',
-    2: 'Period 2 (10:00-1:00)',
-    3: 'Period 3 (1:00-2:00)',
-    4: 'Period 4 (2:00-3:00)',
-    5: 'Period 5 (3:00-4:00)',
-    6: 'Period 6 (4:00-5:00)',
+    2: 'Period 2 (10:00-11:00)',
+    3: 'Period 3 (11:00-12:00)',
+    4: 'Period 4 (12:00-1:00)',
+    5: 'Period 5 (1:00-2:00)',
+    6: 'Period 6 (2:00-3:00)',
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -50,13 +56,36 @@ export const AttendancePage: React.FC = () => {
     setSelectedMeetingHours(newHours)
   }
 
+  const togglePeriod = (period: number) => {
+    const newPeriods = new Set(selectedPeriods)
+    if (newPeriods.has(period)) {
+      newPeriods.delete(period)
+    } else {
+      newPeriods.add(period)
+    }
+    setSelectedPeriods(newPeriods)
+  }
+
+  const handleStatusChange = (status: any) => {
+    setFormData({ ...formData, status })
+    setSelectedMeetingHours(new Set())
+    setSelectedPeriods(new Set())
+    setUsePeriodWiseMarking(false)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
 
-    // Validate meeting hours selection
-    if (formData.status === 'MEETING' && selectedMeetingHours.size === 0) {
-      setError('Please select at least one meeting hour')
+    // Validate period-wise marking
+    if (usePeriodWiseMarking && selectedPeriods.size === 0) {
+      setError('Please select at least one period')
+      return
+    }
+
+    // Validate meeting hours
+    if (formData.status === 'MEETING' && !usePeriodWiseMarking && !['FULL_DAY', 'MORNING_ONLY', 'AFTERNOON_ONLY'].includes(formData.dayType)) {
+      setError('Please select meeting duration')
       return
     }
 
@@ -64,14 +93,6 @@ export const AttendancePage: React.FC = () => {
       setLoading(true)
       setError(null)
       setSuccess(null)
-
-      console.log('Form submission details:', {
-        selectedStatus: formData.status,
-        selectedDayType: formData.dayType,
-        meetingHours: formData.status === 'MEETING' ? Array.from(selectedMeetingHours) : [],
-        attendanceDate: formData.attendanceDate,
-        staffId: user.staffId,
-      })
 
       // Prepare dates
       const dates: string[] = []
@@ -94,22 +115,25 @@ export const AttendancePage: React.FC = () => {
           remarks: formData.remarks || notes,
         }
 
-        // Only add dayType for LEAVE and ABSENT statuses
-        if (formData.status === 'LEAVE' || formData.status === 'ABSENT') {
-          payload.dayType = formData.dayType
+        // Always include dayType (default or selected)
+        payload.dayType = formData.dayType
+
+        // Add period selection if period-wise marking enabled
+        if (usePeriodWiseMarking) {
+          payload.selectedPeriods = Array.from(selectedPeriods)
         }
 
         // Add meeting hours for MEETING status
-        if (formData.status === 'MEETING') {
-          payload.meetingHours = Array.from(selectedMeetingHours)
+        if (formData.status === 'MEETING' && usePeriodWiseMarking) {
+          payload.meetingHours = Array.from(selectedPeriods)
         }
 
         console.log('Sending attendance payload:', payload)
         await attendanceAPI.markAttendance(payload)
       }
 
-      // Upload files if absent
-      if (formData.status === 'ABSENT' && files.length > 0) {
+      // Upload files if needed
+      if (files.length > 0) {
         const formDataUpload = new FormData()
         files.forEach((file) => {
           formDataUpload.append('files', file)
@@ -117,24 +141,42 @@ export const AttendancePage: React.FC = () => {
         formDataUpload.append('staffId', user.staffId)
         formDataUpload.append('lessonDate', formData.attendanceDate)
         formDataUpload.append('notes', notes)
+        formDataUpload.append('classCode', 'GENERAL')
+        formDataUpload.append('subjectId', '0')
         
-        // TODO: Create lesson plan upload endpoint
-        // await attendanceAPI.uploadLessonPlan(formDataUpload)
+        try {
+          await attendanceAPI.uploadLessonPlan(formDataUpload)
+        } catch (uploadErr) {
+          console.warn('File upload failed:', uploadErr)
+        }
       }
 
       setSuccess(`✅ Attendance marked successfully for ${dates.length} day(s)!`)
       
-      // Fetch updated attendance to confirm
-      try {
-        const updatedAttendance = await attendanceAPI.getStaffAttendance(user.staffId)
-        console.log('Updated attendance records:', updatedAttendance.data)
-      } catch (err) {
-        console.warn('Could not fetch updated attendance:', err)
+      // If marked as LEAVE, ONDUTY, or MEETING, fetch and display created alterations
+      if (['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status)) {
+        try {
+          const alterationsResponse = await alterationAPI.getByStaff(user.id.toString())
+          const alterations = alterationsResponse.data.data || []
+          
+          // Count alterations for the marked dates
+          const createdAlterations = alterations.filter((alt: any) => {
+            const altDate = alt.alterationDate.split('T')[0]
+            return dates.includes(altDate)
+          })
+          
+          if (createdAlterations.length > 0) {
+            setCreatedAlterationCount(createdAlterations.length)
+            setShowSuccessModal(true)
+          }
+        } catch (err) {
+          console.warn('Could not fetch alterations:', err)
+        }
       }
       
       // Reset form
       setFormData({
-        status: 'PRESENT',
+        status: 'LEAVE',
         dayType: 'FULL_DAY',
         attendanceDate: new Date().toISOString().split('T')[0],
         endDate: new Date().toISOString().split('T')[0],
@@ -143,6 +185,8 @@ export const AttendancePage: React.FC = () => {
       setNotes('')
       setFiles([])
       setSelectedMeetingHours(new Set())
+      setSelectedPeriods(new Set())
+      setUsePeriodWiseMarking(false)
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to mark attendance')
     } finally {
@@ -177,68 +221,96 @@ export const AttendancePage: React.FC = () => {
           />
         )}
 
+        {/* Alterations Created Modal */}
+        {showSuccessModal && createdAlterationCount > 0 && (
+          <Card className="p-6 bg-green-50 border-2 border-green-300">
+            <div className="flex items-start gap-4">
+              <CheckCircle className="w-8 h-8 text-green-600 flex-shrink-0 mt-1" />
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-green-900 mb-2">
+                  ✅ {createdAlterationCount} Staff Alteration(s) Created
+                </h3>
+                <p className="text-green-800 mb-4">
+                  Substitutes have been automatically assigned for your absence. You can view and manage them in the Alterations page.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowSuccessModal(false)
+                      navigate('/alterations')
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center gap-2"
+                  >
+                    View Alterations
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setShowSuccessModal(false)}
+                    className="px-4 py-2 bg-green-200 text-green-900 rounded-lg hover:bg-green-300 font-medium"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Status Selection */}
+          {/* Status Selection - Simplified */}
           <Card className="p-6">
             <h3 className="font-semibold text-slate-900 mb-4">Attendance Status</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { value: 'PRESENT' as const, label: 'Present', icon: CheckCircle, color: 'border-green-500 bg-green-50' },
-                { value: 'MEETING' as const, label: 'In Meeting', icon: Briefcase, color: 'border-purple-500 bg-purple-50' },
-                { value: 'LEAVE' as const, label: 'On Leave', icon: Calendar, color: 'border-blue-500 bg-blue-50' },
-                { value: 'ABSENT' as const, label: 'Absent', icon: AlertCircle, color: 'border-red-500 bg-red-50' },
+                { value: 'LEAVE' as const, label: 'Leave', icon: Calendar, color: 'border-blue-500 bg-blue-50' },
+                { value: 'ONDUTY' as const, label: 'On Duty', icon: Briefcase, color: 'border-orange-500 bg-orange-50' },
+                { value: 'MEETING' as const, label: 'In Meeting', icon: Clock, color: 'border-purple-500 bg-purple-50' },
               ].map(({ value, label, icon: Icon, color }) => (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => {
-                    setFormData({ ...formData, status: value })
-                    setSelectedMeetingHours(new Set())
-                  }}
+                  onClick={() => handleStatusChange(value)}
                   className={`border-2 rounded-lg p-4 text-center transition-all ${
                     formData.status === value ? color + ' border-2 shadow-md' : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <Icon className="w-8 h-8 mx-auto mb-2 text-slate-700" />
+                  <Icon className="w-6 h-6 mx-auto mb-2 text-slate-700" />
                   <p className="font-medium text-slate-900">{label}</p>
                 </button>
               ))}
             </div>
           </Card>
 
-          {/* Meeting Hours Selection (only for MEETING status) */}
-          {formData.status === 'MEETING' && (
-            <Card className="p-6 border-l-4 border-purple-500">
-              <div className="flex items-center gap-2 mb-4">
-                <Clock className="w-5 h-5 text-purple-600" />
-                <h3 className="font-semibold text-slate-900">Select Meeting Hours</h3>
-              </div>
-              <p className="text-sm text-slate-600 mb-4">Check the periods when you'll be in the meeting</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {periods.map((period) => (
-                  <label key={period} className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-slate-200 hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      checked={selectedMeetingHours.has(period)}
-                      onChange={() => toggleMeetingHour(period)}
-                      className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
-                    />
-                    <span className="text-sm font-medium text-slate-900">{periodLabels[period]}</span>
-                  </label>
-                ))}
-              </div>
+          {/* Period-Wise Marking Checkbox */}
+          {['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status) && (
+            <Card className="p-4 border-l-4 border-slate-400">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={usePeriodWiseMarking}
+                  onChange={(e) => {
+                    setUsePeriodWiseMarking(e.target.checked)
+                    setSelectedPeriods(new Set())
+                  }}
+                  className="w-5 h-5 rounded"
+                />
+                <div>
+                  <p className="font-medium text-slate-900">Mark specific periods</p>
+                  <p className="text-sm text-slate-600">Select individual periods instead of full/half day options</p>
+                </div>
+              </label>
             </Card>
           )}
 
-          {/* Day Type Selection (for LEAVE and ABSENT) */}
-          {(formData.status === 'LEAVE' || formData.status === 'ABSENT') && (
-            <Card className="p-6">
-              <h3 className="font-semibold text-slate-900 mb-4">Day Type</h3>
+          {/* Duration Selection */}
+          {!usePeriodWiseMarking && ['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status) && (
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-slate-900 mb-4">Duration</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[
-                  { value: 'FULL_DAY' as const, label: '🕐 Full Day' },
-                  { value: 'MORNING_ONLY' as const, label: '🌅 Morning (9 AM - 1 PM)' },
-                  { value: 'AFTERNOON_ONLY' as const, label: '🌆 Afternoon (1 PM - 5 PM)' },
+                  { value: 'FULL_DAY' as const, label: 'Full Day' },
+                  { value: 'MORNING_ONLY' as const, label: 'Morning (9 AM - 1 PM)' },
+                  { value: 'AFTERNOON_ONLY' as const, label: 'Afternoon (1 PM - 5 PM)' },
                 ].map(({ value, label }) => (
                   <button
                     key={value}
@@ -253,6 +325,77 @@ export const AttendancePage: React.FC = () => {
                     <p className="font-medium text-slate-900">{label}</p>
                   </button>
                 ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Period Selection (if period-wise marking enabled) */}
+          {usePeriodWiseMarking && (
+            <Card className="p-6 border-l-4 border-slate-500">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock className="w-5 h-5 text-slate-600" />
+                <h3 className="font-semibold text-slate-900">Select Periods</h3>
+              </div>
+              <p className="text-sm text-slate-600 mb-4">Choose the specific periods for this {formData.status.toLowerCase()}</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {periods.map((period) => (
+                  <label key={period} className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-slate-200 hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={selectedPeriods.has(period)}
+                      onChange={() => togglePeriod(period)}
+                      className="w-4 h-4 text-slate-600 rounded focus:ring-2 focus:ring-slate-500"
+                    />
+                    <span className="text-sm font-medium text-slate-900">{periodLabels[period]}</span>
+                  </label>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Lesson Plan Upload Section */}
+          {['LEAVE', 'ONDUTY'].includes(formData.status) && (
+            <Card className="p-6 border-l-4 border-green-500">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText className="w-5 h-5 text-green-600" />
+                <h3 className="font-semibold text-slate-900">Share Lesson Plans</h3>
+              </div>
+              <p className="text-sm text-slate-600 mb-4">Upload lesson plan documents for substitute staff</p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Lesson Plan Files</label>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.jpg,.png"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Supported: PDF, DOC, DOCX, PPT, PPTX, JPG, PNG</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Notes for Substitute</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Add any important instructions or notes..."
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    rows={3}
+                  />
+                </div>
+
+                {files.length > 0 && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                    <p className="text-sm font-medium text-green-900 mb-2">Files selected: {files.length}</p>
+                    <ul className="space-y-1">
+                      {files.map((file, idx) => (
+                        <li key={idx} className="text-sm text-green-800">• {file.name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </Card>
           )}
@@ -314,33 +457,6 @@ export const AttendancePage: React.FC = () => {
               rows={3}
             />
           </Card>
-
-          {/* File Upload (for ABSENT only) */}
-          {formData.status === 'ABSENT' && (
-            <Card className="p-6 space-y-4">
-              <div className="flex items-center gap-2 mb-4">
-                <FileText className="w-5 h-5 text-blue-600" />
-                <h3 className="font-semibold text-slate-900">Upload Lesson Plan (Optional)</h3>
-              </div>
-              <p className="text-sm text-slate-600">Upload any documents related to your absence</p>
-              <input
-                type="file"
-                multiple
-                onChange={handleFileChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {files.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-sm font-medium text-slate-700 mb-2">Selected files:</p>
-                  <ul className="space-y-1">
-                    {files.map((file, idx) => (
-                      <li key={idx} className="text-sm text-slate-600">✓ {file.name}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </Card>
-          )}
 
           {/* Submit Button */}
           <div className="flex gap-3">

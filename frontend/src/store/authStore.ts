@@ -9,6 +9,7 @@ export interface User {
   lastName?: string
   phone?: string
   department?: string
+  departmentId?: number
   roles: string[]
 }
 

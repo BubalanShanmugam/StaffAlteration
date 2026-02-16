@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { LogOut, Menu, X, BarChart3, Calendar, Settings, Clock, Users, FileText, BookOpen, Home } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { ProfileModal } from './ProfileModal'
+import { NotificationCenter } from './NotificationCenter'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -118,6 +119,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           <main className="p-6">{children}</main>
         </div>
       </div>
+
+      {/* Notification Center */}
+      <NotificationCenter />
     </div>
   )
 }

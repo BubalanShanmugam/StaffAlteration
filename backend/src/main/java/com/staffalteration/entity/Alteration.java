@@ -38,6 +38,13 @@ public class Alteration {
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    private AbsenceType absenceType; // FN (Full Day), AN (Morning), AF (Afternoon), ONDUTY, or specific period
+    
+    @Column(name = "period_number")
+    private Integer periodNumber; // For period-specific absences
+    
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private AlterationStatus status;
     
     @ManyToOne(fetch = FetchType.LAZY)
@@ -60,6 +67,9 @@ public class Alteration {
         if (status == null) {
             status = AlterationStatus.ASSIGNED;
         }
+        if (absenceType == null) {
+            absenceType = AbsenceType.FN;
+        }
     }
     
     @PreUpdate
@@ -73,5 +83,13 @@ public class Alteration {
         COMPLETED,
         CANCELLED,
         REJECTED
+    }
+    
+    public enum AbsenceType {
+        FN,  // Full Day
+        AN,  // Morning Only
+        AF,  // Afternoon Only
+        ONDUTY,  // On Duty
+        PERIOD_WISE_ABSENT  // Period Specific Absence
     }
 }

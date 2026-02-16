@@ -46,6 +46,10 @@ dependencies {
     // Apache Commons
     implementation 'org.apache.commons:commons-lang3'
 
+    // Apache POI for Excel Export
+    implementation 'org.apache.poi:poi:5.2.3'
+    implementation 'org.apache.poi:poi-ooxml:5.2.3'
+
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'

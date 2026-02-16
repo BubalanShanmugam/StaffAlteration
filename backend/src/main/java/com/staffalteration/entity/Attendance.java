@@ -78,7 +78,9 @@ public class Attendance {
         PRESENT,
         ABSENT,
         LEAVE,
-        MEETING
+        MEETING,
+        ONDUTY,
+        PERIOD_WISE_ABSENT
     }
     
     public enum DayType {

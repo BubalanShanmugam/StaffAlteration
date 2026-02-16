@@ -12,6 +12,7 @@ import java.util.List;
 @Repository
 public interface AlterationRepository extends JpaRepository<Alteration, Long> {
     List<Alteration> findByAlterationDate(LocalDate date);
+    List<Alteration> findByAlterationDateBetween(LocalDate fromDate, LocalDate toDate);
     List<Alteration> findByTimetableId(Long timetableId);
     List<Alteration> findByOriginalStaffId(Long originalStaffId);
     List<Alteration> findByOriginalStaffIdIn(List<Long> originalStaffIds);
@@ -20,6 +21,9 @@ public interface AlterationRepository extends JpaRepository<Alteration, Long> {
     
     @Query("SELECT a FROM Alteration a WHERE a.timetable.id = :timetableId AND a.alterationDate = :date")
     List<Alteration> findByTimetableAndDate(@Param("timetableId") Long timetableId, @Param("date") LocalDate date);
+    
+    @Query("SELECT a FROM Alteration a WHERE a.originalStaff.id = :staffId AND a.alterationDate = :date")
+    List<Alteration> findByOriginalStaffIdAndAlterationDate(@Param("staffId") Long staffId, @Param("date") LocalDate date);
     
     @Query("SELECT COUNT(a) FROM Alteration a WHERE a.substituteStaff.id = :staffId AND a.alterationDate = :date")
     Integer countAlterationsForStaffOnDate(@Param("staffId") Long staffId, @Param("date") LocalDate date);

@@ -17,11 +17,14 @@
     "lucide-react": "^0.292.0",
     "zustand": "^4.4.5",
     "clsx": "^2.0.0",
-    "date-fns": "^2.30.0"
+    "date-fns": "^2.30.0",
+    "sockjs-client": "^1.6.1",
+    "@stomp/stompjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",
     "@types/react-dom": "^18.2.15",
+    "@types/sockjs-client": "^1.5.1",
     "@typescript-eslint/eslint-plugin": "^6.10.0",
     "@typescript-eslint/parser": "^6.10.0",
     "@vitejs/plugin-react": "^4.2.0",

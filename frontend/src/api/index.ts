@@ -142,6 +142,11 @@ export const attendanceAPI = {
   
   getAbsentStaffByDate: (date: string) =>
     apiClient.get<any>(`/attendance/absent/${date}`),
+  
+  uploadLessonPlan: (formData: FormData) =>
+    apiClient.post<any>('/attendance/upload-lesson-plan', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }),
 }
 
 // Alteration APIs
@@ -184,4 +189,43 @@ export const classManagementAPI = {
   
   delete: (classId: number) =>
     apiClient.delete(`/class-management/${classId}`),
+}
+// Report APIs
+export const reportAPI = {
+  exportAlterations: (fromDate?: string, toDate?: string, departmentId?: number) => {
+    const params = new URLSearchParams()
+    if (fromDate) params.append('fromDate', fromDate)
+    if (toDate) params.append('toDate', toDate)
+    if (departmentId) params.append('departmentId', departmentId.toString())
+    
+    return apiClient.get<any>(
+      `/reports/alterations/export?${params.toString()}`,
+      { responseType: 'blob' }
+    )
+  },
+
+  getAlterationStatistics: (fromDate?: string, toDate?: string, departmentId?: number) =>
+    apiClient.get<any>('/reports/alterations/statistics', {
+      params: {
+        fromDate,
+        toDate,
+        departmentId,
+      }
+    }),
+}
+
+// Lesson Plan APIs
+export const lessonPlanAPI = {
+  getById: (lessonPlanId: number) =>
+    apiClient.get<any>(`/lesson-plan/${lessonPlanId}`),
+  
+  getPreviewUrl: (lessonPlanId: number) =>
+    apiClient.get<any>(`/lesson-plan/${lessonPlanId}/preview`),
+  
+  downloadFile: (lessonPlanId: number) => {
+    return apiClient.get<any>(
+      `/lesson-plan/${lessonPlanId}/download`,
+      { responseType: 'blob' }
+    )
+  },
 }
