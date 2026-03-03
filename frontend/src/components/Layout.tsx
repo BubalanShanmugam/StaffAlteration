@@ -49,7 +49,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div
         className={`${
           sidebarOpen ? 'w-64' : 'w-20'
-        } bg-gradient-to-b from-slate-900 to-slate-800 text-white transition-all duration-300 flex flex-col`}
+        } bg-gradient-to-b from-slate-900 to-slate-800 text-white transition-all duration-300 flex flex-col shadow-lg`}
       >
         {/* Logo */}
         <div className="p-6 border-b border-slate-700 flex items-center justify-between">
@@ -96,9 +96,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100 bg-opacity-95">
         {/* Top Bar */}
-        <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
+        <div className="bg-white bg-opacity-90 border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-md">
           <h2 className="text-2xl font-bold text-slate-900">Staff Alteration System</h2>
           <div className="flex items-center gap-4">
             <button
@@ -116,7 +116,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         {/* Page Content */}
         <div className="flex-1 overflow-auto">
-          <main className="p-6">{children}</main>
+          <main className="p-6 ">{children}</main>
         </div>
       </div>
 

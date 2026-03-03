@@ -152,49 +152,37 @@ public class AttendanceService {
     }
     
     private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance attendance, Set<Integer> absentPeriods) {
-        log.warn("========== ALTERATION TRIGGER START ==========");
-        log.warn("Staff: {} (ID: {}), Date: {}, Status: {}", 
-                 staff.getStaffId(), staff.getId(), date, attendance.getStatus());
+        log.info("Triggering alteration process for staff: {} on date: {}, status: {}", 
+                 staff.getStaffId(), date, attendance.getStatus());
         
         // Get day of week (1=Monday, 7=Sunday in Java DayOfWeek)
         int dayOfWeek = date.getDayOfWeek().getValue(); // 1=Monday, 7=Sunday
-        log.warn("Day of week: {} (1=Monday, 7=Sunday)", dayOfWeek);
+        log.info("Current day of week: {} (1=Monday, 7=Sunday)", dayOfWeek);
         
         // Get all timetables for this staff on this day of week
-        List<Timetable> allTimetables = timetableRepository.findByStaffId(staff.getId());
-        log.warn("Total timetables for staff {}: {}", staff.getStaffId(), allTimetables.size());
-        
-        if (allTimetables.isEmpty()) {
-            log.error("❌ CRITICAL: No timetables found for staff {}. Cannot create alterations!", staff.getStaffId());
-            log.warn("========== ALTERATION TRIGGER END (NO TIMETABLES) ==========");
-            return;
-        }
-        
-        // Log all timetables
-        allTimetables.forEach(t -> log.debug("  Timetable: dayOrder={}, period={}, class={}, subject={}",
-            t.getDayOrder(), t.getPeriodNumber(),
-            t.getClassRoom() != null ? t.getClassRoom().getClassCode() : "UNKNOWN",
-            t.getSubject() != null ? t.getSubject().getSubjectName() : "UNKNOWN"));
+        List<Timetable> timetables = timetableRepository.findByStaffId(staff.getId());
+        log.info("Total timetables found for staff {}: {}", staff.getStaffId(), timetables.size());
         
         List<Timetable> timetablesForToday = new ArrayList<>();
         
-        for (Timetable timetable : allTimetables) {
+        for (Timetable timetable : timetables) {
             Integer tableDay = timetable.getDayOrder();
+            log.debug("Checking timetable: dayOrder={}, period={}, class={}", tableDay, timetable.getPeriodNumber(), 
+                     timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN");
             if (tableDay != null && tableDay.equals(dayOfWeek)) {
                 timetablesForToday.add(timetable);
             }
         }
         
-        log.warn("Matching timetables for day {}: {}", dayOfWeek, timetablesForToday.size());
-        
         // Determine which periods need alteration
         java.util.Set<Integer> periodsThatNeedAlteration = getPeriodsThatNeedAlteration(attendance, absentPeriods);
-        log.warn("Periods needing alteration: {}", periodsThatNeedAlteration);
+        
+        log.warn("Processing {} matching timetables for date: {}, day: {}, periods: {}", 
+                 timetablesForToday.size(), date, dayOfWeek, periodsThatNeedAlteration);
         
         if (timetablesForToday.isEmpty()) {
-            log.error("❌ CRITICAL: No timetables found for staff {} on day {} (date: {}). Alteration process cannot proceed.", 
+            log.error("NO TIMETABLES FOUND for staff {} on day {} (date: {}). Alteration process cannot proceed.", 
                      staff.getStaffId(), dayOfWeek, date);
-            log.warn("========== ALTERATION TRIGGER END (NO MATCHING TIMETABLES) ==========");
             return;
         }
         
@@ -202,20 +190,17 @@ public class AttendanceService {
         int alterationsCreated = 0;
         for (Timetable timetable : timetablesForToday) {
             if (periodsThatNeedAlteration.contains(timetable.getPeriodNumber())) {
-                log.warn("✓ Creating alteration for: period={}, class={}", 
+                log.info("Creating alteration for timetable: period={}, class={}", 
                         timetable.getPeriodNumber(), 
                         timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN");
                 Alteration alteration = alterationService.processAlteration(timetable, date);
                 if (alteration != null) {
                     alterationsCreated++;
-                    log.warn("✓ Alteration created: ID={}, substitute={}", alteration.getId(), alteration.getSubstituteStaff().getStaffId());
-                } else {
-                    log.error("❌ Failed to create alteration for period {}: No substitute found or other issue", timetable.getPeriodNumber());
                 }
             }
         }
         
-        log.warn("========== ALTERATION TRIGGER END: {} alterations created out of {} matching timetables ==========", 
+        log.warn("Alteration process completed: {} alterations created out of {} matching timetables", 
                 alterationsCreated, timetablesForToday.size());
     }
     

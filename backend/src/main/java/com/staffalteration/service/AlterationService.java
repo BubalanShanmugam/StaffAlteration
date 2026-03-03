@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -45,6 +46,9 @@ public class AlterationService {
     @Autowired
     private WebSocketController webSocketController;
     
+    @Autowired
+    private AlterationAuditRepository alterationAuditRepository;
+    
     private static final int PERIODS_PER_DAY = 6;
     private static final int DAY_ORDERS = 6;
     
@@ -57,26 +61,18 @@ public class AlterationService {
      * 4. Staff with minimum number of hours comparing to all sorted staff
      */
     public Alteration processAlteration(Timetable timetable, LocalDate alterationDate) {
-        log.warn("========== PROCESS ALTERATION START ==========");
-        log.warn("Timetable: {}, Date: {}, Class: {}, Period: {}", 
-                 timetable.getId(), alterationDate,
-                 timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN",
-                 timetable.getPeriodNumber());
+        log.info("Processing alteration for timetable: {}, date: {}", timetable.getId(), alterationDate);
         
         Staff originalStaff = timetable.getStaff();
-        log.warn("Original Staff: {} (ID: {})", originalStaff.getStaffId(), originalStaff.getId());
         
         // Check if staff is absent, on duty, or in meeting on alteration date
         Attendance attendance = attendanceRepository.findByStaffIdAndAttendanceDate(originalStaff.getId(), alterationDate)
                 .orElse(null);
         
         if (attendance == null) {
-            log.error("❌ No attendance record for staff {} on {}", originalStaff.getStaffId(), alterationDate);
-            log.warn("========== PROCESS ALTERATION END (NO ATTENDANCE) ==========");
+            log.warn("No attendance record for staff {} on {}", originalStaff.getStaffId(), alterationDate);
             return null;
         }
-        
-        log.warn("Attendance found: status={}, dayType={}", attendance.getStatus(), attendance.getDayType());
         
         boolean needsAlteration = attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE) ||
                                  attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) ||
@@ -85,12 +81,9 @@ public class AlterationService {
                                  attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT);
         
         if (!needsAlteration) {
-            log.warn("Staff {} is PRESENT, no alteration needed", originalStaff.getStaffId());
-            log.warn("========== PROCESS ALTERATION END (NO ALTERATION NEEDED) ==========");
+            log.debug("Staff {} is not absent/meeting/onduty on {}", originalStaff.getStaffId(), alterationDate);
             return null;
         }
-        
-        log.warn("✓ Alteration IS needed for this staff");
         
         // Determine absence type based on attendance status and dayType
         Alteration.AbsenceType absenceType = Alteration.AbsenceType.FN; // Default to full day
@@ -107,7 +100,6 @@ public class AlterationService {
             } else {
                 // This period is not affected by the meeting
                 log.debug("Period {} is not affected by meeting", timetable.getPeriodNumber());
-                log.warn("========== PROCESS ALTERATION END (PERIOD NOT IN MEETING) ==========");
                 return null;
             }
         } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
@@ -152,20 +144,15 @@ public class AlterationService {
             }
         }
         
-        log.warn("Absence type determined: {}", absenceType);
 
         
         // Find candidate substitute
-        log.warn("Finding suitable substitute...");
         Staff substituteStaff = findSubstitute(timetable, alterationDate);
         
         if (substituteStaff == null) {
-            log.error("❌ No suitable substitute found for timetable: {}", timetable.getId());
-            log.warn("========== PROCESS ALTERATION END (NO SUBSTITUTE FOUND) ==========");
+            log.warn("No suitable substitute found for timetable: {}", timetable.getId());
             return null;
         }
-        
-        log.warn("✓ Substitute found: {} (ID: {})", substituteStaff.getStaffId(), substituteStaff.getId());
         
         // Create alteration record
         Alteration alteration = Alteration.builder()
@@ -181,8 +168,11 @@ public class AlterationService {
         
         @SuppressWarnings("null")
         Alteration savedAlteration = alterationRepository.save(alteration);
-        log.warn("✓✓✓ ALTERATION CREATED: ID={}, original={}, substitute={}, absenceType={}", 
-                 savedAlteration.getId(), originalStaff.getStaffId(), substituteStaff.getStaffId(), absenceType);
+        log.info("Alteration created: original={}, substitute={}, absenceType={}", 
+                 originalStaff.getStaffId(), substituteStaff.getStaffId(), absenceType);
+        
+        // Log audit record for this alteration
+        logAlterationAudit(savedAlteration);
         
         // Broadcast new alteration via WebSocket
         AlterationDTO alterationDTO = mapToDTO(savedAlteration);
@@ -222,7 +212,6 @@ public class AlterationService {
             );
         }
         
-        log.warn("========== PROCESS ALTERATION END (SUCCESS) ==========");
         return savedAlteration;
     }
     
@@ -234,22 +223,15 @@ public class AlterationService {
      * Priority 4: Staff with minimum number of hours
      */
     private Staff findSubstitute(Timetable timetable, LocalDate alterationDate) {
-        log.warn("  [SUBSTITUTE SEARCH] Starting substitute search for class {}, period {}", 
-                 timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN",
-                 timetable.getPeriodNumber());
-        
         List<Staff> allStaff = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
-        log.debug("  [SUBSTITUTE SEARCH] Total active staff in system: {}", allStaff.size());
         
         // Remove the original staff from candidates
         allStaff.remove(timetable.getStaff());
         
         if (allStaff.isEmpty()) {
-            log.error("  ❌ [SUBSTITUTE SEARCH] No active staff available for substitution");
+            log.warn("No active staff available for substitution");
             return null;
         }
-        
-        log.debug("  [SUBSTITUTE SEARCH] Staff after removing original: {}", allStaff.size());
         
         // PRIORITY 1: Filter for staff who are PRESENT (or don't have attendance marked)
         List<Staff> presentStaff = allStaff.stream()
@@ -261,10 +243,8 @@ public class AlterationService {
                 })
                 .collect(Collectors.toList());
         
-        log.debug("  [SUBSTITUTE SEARCH] Present staff (Priority 1): {}", presentStaff.size());
-        
         if (presentStaff.isEmpty()) {
-            log.error("  ❌ [SUBSTITUTE SEARCH] No present staff available for period {}", timetable.getPeriodNumber());
+            log.warn("No present staff available for period {}", timetable.getPeriodNumber());
             return null;
         }
         
@@ -273,11 +253,8 @@ public class AlterationService {
                 .filter(staff -> !isAlreadyAllocatedForPeriod(staff, timetable, alterationDate))
                 .collect(Collectors.toList());
         
-        log.debug("  [SUBSTITUTE SEARCH] Available (not allocated) staff: {}", availableStaff.size());
-        
         if (availableStaff.isEmpty()) {
-            log.warn("  ⚠️ [SUBSTITUTE SEARCH] All present staff already allocated for period {}, using fallback", 
-                     timetable.getPeriodNumber());
+            log.warn("All present staff already allocated for period {}", timetable.getPeriodNumber());
             return presentStaff.get(0); // Fallback
         }
         
@@ -286,20 +263,10 @@ public class AlterationService {
                 .filter(staff -> staff.getDepartment().equals(timetable.getStaff().getDepartment()))
                 .collect(Collectors.toList());
         
-        log.debug("  [SUBSTITUTE SEARCH] Same department staff (Priority 2): {}", sameDepartmentStaff.size());
-        
         List<Staff> candidateList = sameDepartmentStaff.isEmpty() ? availableStaff : sameDepartmentStaff;
         
         // PRIORITY 3 & 4: Select best based on continuous hours and total hours
-        Staff selected = selectBestStaff(candidateList, timetable, alterationDate);
-        
-        if (selected != null) {
-            log.warn("  ✓ [SUBSTITUTE SEARCH] Selected: {} (ID: {})", selected.getStaffId(), selected.getId());
-        } else {
-            log.error("  ❌ [SUBSTITUTE SEARCH] selectBestStaff returned null from {} candidates", candidateList.size());
-        }
-        
-        return selected;
+        return selectBestStaff(candidateList, timetable, alterationDate);
     }
     
     /**
@@ -308,27 +275,21 @@ public class AlterationService {
      * Priority 4: Staff with minimum total hours
      */
     private Staff selectBestStaff(List<Staff> candidates, Timetable timetable, LocalDate alterationDate) {
-        log.debug("  [SELECT BEST] Scoring {} candidates for period {}", candidates.size(), timetable.getPeriodNumber());
-        
         // Score each candidate (lower is better)
         List<StaffScore> scores = candidates.stream()
                 .map(staff -> {
                     double score = calculateScore(staff, timetable, alterationDate);
-                    log.debug("    [SELECT BEST] Staff {} has score: {}", staff.getStaffId(), score);
                     return new StaffScore(staff, score);
                 })
                 .sorted(Comparator.comparingDouble(StaffScore::getScore))
                 .collect(Collectors.toList());
         
         if (scores.isEmpty()) {
-            log.error("  ❌ [SELECT BEST] Scores list is empty");
             return null;
         }
         
-        StaffScore bestScore = scores.get(0);
-        log.warn("  ✓✓ [SELECT BEST] Best candidate: {} with score: {}", 
-                 bestScore.getStaff().getStaffId(), bestScore.getScore());
-        return bestScore.getStaff();
+        log.debug("Top candidate for period {}: {}", timetable.getPeriodNumber(), scores.get(0).getStaff().getStaffId());
+        return scores.get(0).getStaff();
     }
     
     /**
@@ -546,6 +507,10 @@ public class AlterationService {
             
             @SuppressWarnings("null")
             Alteration updatedAlteration = alterationRepository.save(alteration);
+            
+            // Update audit record with second substitute assignment
+            updateAuditOnSecondSubstituteAssignment(updatedAlteration, previousSubstitute);
+            
             log.info("Alteration automatically re-assigned to second substitute: {} (previous: {})", 
                      newSubstitute.getStaffId(), previousSubstitute.getStaffId());
             
@@ -627,5 +592,112 @@ public class AlterationService {
                 .createdAt(alteration.getCreatedAt())
                 .updatedAt(alteration.getUpdatedAt())
                 .build();
+    }
+    
+    /**
+     * Create an audit record for alteration creation
+     */
+    private void logAlterationAudit(Alteration alteration) {
+        try {
+            Staff originalStaff = alteration.getOriginalStaff();
+            Staff firstSubstitute = alteration.getSubstituteStaff();
+            
+            AlterationAudit audit = AlterationAudit.builder()
+                    .originalStaffId(originalStaff.getId())
+                    .originalStaffName(originalStaff.getFirstName() + " " + originalStaff.getLastName())
+                    .originalStaffEmail(originalStaff.getEmail())
+                    .absenceDate(alteration.getAlterationDate())
+                    .absenceType(alteration.getAbsenceType().toString())
+                    .className(alteration.getTimetable() != null && alteration.getTimetable().getClassRoom() != null ?
+                            alteration.getTimetable().getClassRoom().getClassCode() : null)
+                    .subject(alteration.getTimetable() != null && alteration.getTimetable().getSubject() != null ?
+                            alteration.getTimetable().getSubject().getSubjectName() : null)
+                    .periodNumber(alteration.getPeriodNumber())
+                    .firstSubstituteId(firstSubstitute.getId())
+                    .firstSubstituteName(firstSubstitute.getFirstName() + " " + firstSubstitute.getLastName())
+                    .firstSubstituteEmail(firstSubstitute.getEmail())
+                    .firstSubstituteStatus("PENDING")
+                    .finalStatus("PENDING")
+                    .remarks("Alteration created and assigned to first substitute")
+                    .build();
+            
+            alterationAuditRepository.save(audit);
+            log.info("Audit record created for alteration ID: {}", alteration.getId());
+        } catch (Exception e) {
+            log.error("Error creating audit record for alteration: {}", alteration.getId(), e);
+            // Don't throw exception - audit logging should not block alteration creation
+        }
+    }
+    
+    /**
+     * Update audit record when first substitute accepts/rejects
+     */
+    private void updateAuditOnFirstSubstituteResponse(Alteration alteration, String status) {
+        try {
+            Staff originalStaff = alteration.getOriginalStaff();
+            Staff firstSubstitute = alteration.getSubstituteStaff();
+            
+            // Find existing audit record for this alteration
+            // For now, query by original staff and absence date (can be improved)
+            List<AlterationAudit> existingAudits = alterationAuditRepository.findByOriginalStaffId(originalStaff.getId());
+            
+            AlterationAudit matchingAudit = existingAudits.stream()
+                    .filter(a -> a.getAbsenceDate().equals(alteration.getAlterationDate()) &&
+                                 a.getPeriodNumber().equals(alteration.getPeriodNumber()) &&
+                                 a.getFirstSubstituteId().equals(firstSubstitute.getId()))
+                    .findFirst()
+                    .orElse(null);
+            
+            if (matchingAudit != null) {
+                matchingAudit.setFirstSubstituteStatus(status);
+                matchingAudit.setFirstSubstituteResponseTime(LocalDateTime.now());
+                
+                if (status.equals("ACCEPTED")) {
+                    matchingAudit.setFinalStatus("FULFILLED");
+                }
+                
+                alterationAuditRepository.save(matchingAudit);
+                log.info("Audit record updated for first substitute response: {}", status);
+            }
+        } catch (Exception e) {
+            log.error("Error updating audit record for alteration response: {}", alteration.getId(), e);
+        }
+    }
+    
+    /**
+     * Update audit record when first substitute rejects and second substitute is assigned
+     */
+    private void updateAuditOnSecondSubstituteAssignment(Alteration alteration, Staff previousSubstitute) {
+        try {
+            Staff originalStaff = alteration.getOriginalStaff();
+            Staff secondSubstitute = alteration.getSubstituteStaff();
+            
+            // Find existing audit record
+            List<AlterationAudit> existingAudits = alterationAuditRepository.findByOriginalStaffId(originalStaff.getId());
+            
+            AlterationAudit matchingAudit = existingAudits.stream()
+                    .filter(a -> a.getAbsenceDate().equals(alteration.getAlterationDate()) &&
+                                 a.getPeriodNumber().equals(alteration.getPeriodNumber()) &&
+                                 a.getFirstSubstituteId().equals(previousSubstitute.getId()))
+                    .findFirst()
+                    .orElse(null);
+            
+            if (matchingAudit != null) {
+                // Update the record with second substitute information
+                matchingAudit.setFirstSubstituteStatus("REJECTED");
+                matchingAudit.setSecondSubstituteId(secondSubstitute.getId());
+                matchingAudit.setSecondSubstituteName(secondSubstitute.getFirstName() + " " + secondSubstitute.getLastName());
+                matchingAudit.setSecondSubstituteEmail(secondSubstitute.getEmail());
+                matchingAudit.setSecondSubstituteStatus("PENDING");
+                matchingAudit.setFinalStatus("PENDING");
+                matchingAudit.setRemarks("First substitute rejected. Automatically reassigned to second substitute: " + 
+                                        secondSubstitute.getFirstName() + " " + secondSubstitute.getLastName());
+                
+                alterationAuditRepository.save(matchingAudit);
+                log.info("Audit record updated with second substitute assignment");
+            }
+        } catch (Exception e) {
+            log.error("Error updating audit record for second substitute assignment: {}", alteration.getId(), e);
+        }
     }
 }

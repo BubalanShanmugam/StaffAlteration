@@ -6,8 +6,18 @@
   @apply transition-colors;
 }
 
+html, body, #root {
+  @apply w-full h-full;
+}
+
 body {
-  @apply bg-gradient-to-br from-slate-50 to-slate-100 text-slate-900;
+  @apply text-slate-900;
+  background-image: url('/KPRView.jpg');
+  background-attachment: fixed;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: #1e293b;
 }
 
 /* Custom scrollbar */
