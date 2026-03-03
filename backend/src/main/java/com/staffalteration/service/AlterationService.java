@@ -465,7 +465,7 @@ public class AlterationService {
         log.info("Alteration rejected by {}, finding alternative substitute", previousSubstitute.getStaffId());
         
         // Get all active staff except original staff and previous substitute
-        List<Staff> candidates = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
+        List<Staff> candidates = new ArrayList<>(staffRepository.findByStatus(Staff.StaffStatus.ACTIVE));
         candidates.removeIf(staff -> staff.getId().equals(originalStaff.getId()) || 
                                      staff.getId().equals(previousSubstitute.getId()));
         

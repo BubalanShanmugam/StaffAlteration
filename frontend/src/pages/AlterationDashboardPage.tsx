@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { AlertCircle, CheckCircle, Clock, FileText, Download, Eye, RotateCcw } from 'lucide-react'
 import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
@@ -41,9 +41,32 @@ export const AlterationDashboardPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'monthly' | 'weekly'>('monthly')
   const [isRefreshing, setIsRefreshing] = useState(false)
 
+  // Memoize loadAlterations to prevent unnecessary re-renders
+  const loadAlterations = useCallback(async () => {
+    if (!user) {
+      console.warn('[AlterationDashboard] User not available, skipping load')
+      return
+    }
+    try {
+      setLoading(true)
+      setError(null)
+      console.log('[AlterationDashboard] Loading alterations for user:', user.id, user.staffId)
+      const response = await alterationAPI.getByStaff(user.id.toString())
+      const altData = response.data.data || []
+      console.log('[AlterationDashboard] Loaded alterations:', altData)
+      setAlterations(altData)
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to load alterations'
+      setError(errorMsg)
+      console.error('[AlterationDashboard] Failed to load alterations:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [user])
+
   useEffect(() => {
     loadAlterations()
-  }, [activeTab, user])
+  }, [user, loadAlterations])
 
   // Set up WebSocket listeners for real-time updates
   useAlterationWebSocket(
@@ -51,6 +74,7 @@ export const AlterationDashboardPage: React.FC = () => {
       // New alteration created - only add if relevant to current user
       const isRelevant = data.originalStaffId === user?.staffId || data.substituteStaffId === user?.staffId
       if (isRelevant) {
+        console.log('[AlterationDashboard] New alteration received:', data)
         setAlterations((prev) => {
           if (prev.some((a) => a.id === data.id)) return prev
           return [data, ...prev]
@@ -58,31 +82,19 @@ export const AlterationDashboardPage: React.FC = () => {
       }
     },
     (data: Alteration) => {
-      // Alteration updated
+      // Alteration updated - re-assign automatically or status changed
+      console.log('[AlterationDashboard] Alteration updated:', data)
       setAlterations((prev) =>
         prev.map((alt) => (alt.id === data.id ? data : alt))
       )
     },
     () => {
       // Alteration rejected - reload to get new assignments
+      console.log('[AlterationDashboard] Alteration rejected, reloading...')
       loadAlterations()
-    }
+    },
+    user?.departmentId
   )
-
-  const loadAlterations = async () => {
-    if (!user) return
-    try {
-      setLoading(true)
-      const response = await alterationAPI.getByStaff(user.id.toString())
-      setAlterations(response.data.data || [])
-      console.log('Loaded alterations:', response.data.data)
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load alterations')
-      console.error('Failed to load alterations:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   // Categorize alterations for calendar display
   const dateInfoByType = useMemo(() => {
