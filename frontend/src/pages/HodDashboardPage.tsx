@@ -196,7 +196,7 @@ export const HodDashboardPage: React.FC = () => {
             className="flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
-            Export to Excel
+            Export Record
           </Button>
         </div>
 
@@ -222,7 +222,7 @@ export const HodDashboardPage: React.FC = () => {
         {showExportModal && (
           <Card className="p-6 border-2 border-blue-500">
             <div className="space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Export Alterations Report</h3>
+              <h3 className="text-lg font-bold text-slate-900">Export Alteration Record</h3>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -274,7 +274,7 @@ export const HodDashboardPage: React.FC = () => {
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
-                      Download Excel
+                      Download Report
                     </>
                   )}
                 </Button>

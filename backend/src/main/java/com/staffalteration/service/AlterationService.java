@@ -83,42 +83,64 @@ public class AlterationService {
         
         // Determine absence type based on attendance status and dayType
         Alteration.AbsenceType absenceType = Alteration.AbsenceType.FN; // Default to full day
-        Integer periodNumber = null;
+        Integer periodNumber = timetable.getPeriodNumber();
         
-        if (attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
-            absenceType = Alteration.AbsenceType.PERIOD_WISE_ABSENT;
-            periodNumber = timetable.getPeriodNumber();
-        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE)) {
-            // For LEAVE, handle based on dayType
-            if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
-                absenceType = Alteration.AbsenceType.AN;
-            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
-                absenceType = Alteration.AbsenceType.AF;
-            } else {
-                absenceType = Alteration.AbsenceType.FN; // Full day leave
-            }
-        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY)) {
-            absenceType = Alteration.AbsenceType.ONDUTY;
-            if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
-                absenceType = Alteration.AbsenceType.AN;
-            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
-                absenceType = Alteration.AbsenceType.AF;
-            }
-        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
-            if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
-                absenceType = Alteration.AbsenceType.AN;
-            } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
-                absenceType = Alteration.AbsenceType.AF;
-            }
-        }
-        
-        // For MEETING status, check if this period is affected
+        // Check for MEETING or PERIOD_WISE_ABSENT statuses first (these are period-specific by nature)
         if (attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
-            if (!attendance.getMeetingHours().contains(timetable.getPeriodNumber())) {
+            // For MEETING, check if this specific period is in the meeting hours
+            if (attendance.getMeetingHours() != null && 
+                !attendance.getMeetingHours().isEmpty() && 
+                attendance.getMeetingHours().contains(timetable.getPeriodNumber())) {
+                absenceType = Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+                periodNumber = timetable.getPeriodNumber();
+            } else {
+                // This period is not affected by the meeting
                 log.debug("Period {} is not affected by meeting", timetable.getPeriodNumber());
                 return null;
             }
+        } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
+            // For PERIOD_WISE_ABSENT, alteration is needed for specific marked periods
+            absenceType = Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+            periodNumber = timetable.getPeriodNumber();
+        } else {
+            // For LEAVE, ABSENT, and ONDUTY, determine absence type based on dayType
+            Attendance.DayType dayType = attendance.getDayType();
+            
+            if (dayType == null) {
+                dayType = Attendance.DayType.FULL_DAY; // Default if not set
+            }
+            
+            if (attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE)) {
+                // LEAVE with specific dayType
+                if (dayType.equals(Attendance.DayType.MORNING_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AN; // An = Morning Leave
+                } else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AF; // Af = Afternoon Leave
+                } else {
+                    absenceType = Alteration.AbsenceType.FN; // Fn = Full Day Leave
+                }
+            } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT)) {
+                // ABSENT with specific dayType
+                if (dayType.equals(Attendance.DayType.MORNING_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AN; // An = Morning Absent
+                } else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AF; // Af = Afternoon Absent
+                } else {
+                    absenceType = Alteration.AbsenceType.FN; // Fn = Full Day Absent
+                }
+            } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY)) {
+                // ON DUTY with specific dayType
+                if (dayType.equals(Attendance.DayType.MORNING_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AN; // An = Morning On-Duty
+                } else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                    absenceType = Alteration.AbsenceType.AF; // Af = Afternoon On-Duty
+                } else {
+                    absenceType = Alteration.AbsenceType.ONDUTY; // On-Duty enum value for full day
+                }
+            }
         }
+        
+
         
         // Find candidate substitute
         Staff substituteStaff = findSubstitute(timetable, alterationDate);
@@ -153,11 +175,25 @@ public class AlterationService {
         // Update workload summary for substitute
         updateWorkloadSummary(substituteStaff, alterationDate);
         
-        // Send in-app notification
+        // Send in-app notification to substitute
         notificationService.notifySubstituteStaff(savedAlteration);
+        
+        // Notify HOD of the substitution
+        staffRepository.findHodByDepartmentId(originalStaff.getDepartment().getId(), Role.RoleType.HOD).ifPresent(hod -> {
+            notificationService.notifyHodOnSubstitution(savedAlteration, hod);
+            emailService.sendAlterationNotificationToHod(hod, savedAlteration);
+            if (hod.getPhoneNumber() != null) {
+                smsService.notifyHodOnSubstitution(hod.getPhoneNumber(), originalStaff.getFirstName() + " " + originalStaff.getLastName(),
+                    substituteStaff.getFirstName() + " " + substituteStaff.getLastName(),
+                    timetable.getClassRoom().getClassCode(), alterationDate.toString());
+            }
+        });
         
         // Send email notifications to both staff members
         emailService.sendAlterationNotification(savedAlteration);
+        
+        // Send lesson plan to substitute staff
+        emailService.sendLessonPlanToSubstitute(savedAlteration);
         
         // Send SMS notifications
         if (substituteStaff.getPhoneNumber() != null) {
@@ -420,57 +456,96 @@ public class AlterationService {
         Alteration alteration = alterationRepository.findById(alterationId)
                 .orElseThrow(() -> new RuntimeException("Alteration not found"));
         
-        // Get the old substitute before marking as rejected
+        // Get the old substitute before trying to find a new one
         Staff previousSubstitute = alteration.getSubstituteStaff();
         Timetable timetable = alteration.getTimetable();
         LocalDate alterationDate = alteration.getAlterationDate();
+        Staff originalStaff = alteration.getOriginalStaff();
         
-        // Mark current alteration as rejected (but don't save yet)
-        alteration.setStatus(Alteration.AlterationStatus.REJECTED);
+        log.info("Alteration rejected by {}, finding alternative substitute", previousSubstitute.getStaffId());
         
-        // Get all staff except original and previous substitute
-        List<Staff> allStaff = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
-        allStaff.remove(timetable.getStaff());
-        allStaff.remove(previousSubstitute);
+        // Get all active staff except original staff and previous substitute
+        List<Staff> candidates = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
+        candidates.removeIf(staff -> staff.getId().equals(originalStaff.getId()) || 
+                                     staff.getId().equals(previousSubstitute.getId()));
         
-        if (allStaff.isEmpty()) {
+        if (candidates.isEmpty()) {
             log.warn("No alternative substitutes available for alteration: {}", alterationId);
-            // Save as rejected if no alternatives
+            // Mark as rejected if no alternatives exist
+            alteration.setStatus(Alteration.AlterationStatus.REJECTED);
+            alteration.setRemarks("Rejected by " + previousSubstitute.getStaffId() + ". No alternative substitutes available.");
             Alteration rejectedAlt = alterationRepository.save(alteration);
+            
             AlterationDTO rejectedDTO = mapToDTO(rejectedAlt);
             webSocketController.broadcastAlterationRejected(rejectedDTO);
+            webSocketController.broadcastToDepartment(originalStaff.getDepartment().getId(), "ALTERATION_REJECTED", rejectedDTO);
+            
+            // Notify HOD about rejection with no replacement
+            staffRepository.findHodByDepartmentId(originalStaff.getDepartment().getId(), Role.RoleType.HOD).ifPresent(hod -> {
+                notificationService.notifyHodOnSubstitution(rejectedAlt, hod);
+                emailService.sendAlterationNotificationToHod(hod, rejectedAlt);
+            });
+            
             return rejectedDTO;
         }
         
-        // Find a new substitute with revised criteria
-        Staff newSubstitute = selectBestStaff(allStaff, timetable, alterationDate);
+        // Find the best alternative substitute from remaining candidates
+        Staff newSubstitute = selectBestStaff(candidates, timetable, alterationDate);
         
         if (newSubstitute != null) {
-            // UPDATE the same alteration with new substitute instead of creating new one
+            // Update the same alteration with the new substitute (AUTOMATIC ASSIGNMENT)
             alteration.setSubstituteStaff(newSubstitute);
-            alteration.setStatus(Alteration.AlterationStatus.ASSIGNED);
-            alteration.setRemarks("Re-assigned after rejection of: " + previousSubstitute.getStaffId());
+            alteration.setStatus(Alteration.AlterationStatus.ASSIGNED); // Reset to ASSIGNED for new substitute
+            alteration.setRemarks("Auto-reassigned from " + previousSubstitute.getStaffId() + " (rejected) to " + newSubstitute.getStaffId());
             
             @SuppressWarnings("null")
-            Alteration savedAlteration = alterationRepository.save(alteration);
-            log.info("Alteration updated with new substitute: {}", newSubstitute.getStaffId());
+            Alteration updatedAlteration = alterationRepository.save(alteration);
+            log.info("Alteration automatically re-assigned to second substitute: {} (previous: {})", 
+                     newSubstitute.getStaffId(), previousSubstitute.getStaffId());
             
-            // Broadcast update
-            AlterationDTO updatedDTO = mapToDTO(savedAlteration);
+            // Broadcast the updated alteration to the frontend
+            AlterationDTO updatedDTO = mapToDTO(updatedAlteration);
             webSocketController.broadcastAlterationUpdated(updatedDTO);
-            webSocketController.broadcastToDepartment(timetable.getStaff().getDepartment().getId(), "ALTERATION_UPDATED", updatedDTO);
+            webSocketController.broadcastToDepartment(originalStaff.getDepartment().getId(), "ALTERATION_REASSIGNED", updatedDTO);
             
-            // Send notifications to new substitute
-            notificationService.notifySubstituteStaff(savedAlteration);
-            emailService.sendAlterationNotification(savedAlteration);
+            // Notify the new substitute
+            notificationService.notifySubstituteStaff(updatedAlteration);
+            emailService.sendAlterationNotification(updatedAlteration);
+            
+            if (newSubstitute.getPhoneNumber() != null) {
+                smsService.notifySubstituteAssigned(
+                    newSubstitute.getPhoneNumber(),
+                    originalStaff.getFirstName() + " " + originalStaff.getLastName(),
+                    timetable.getClassRoom().getClassCode(),
+                    alterationDate.toString()
+                );
+            }
+            
+            // Notify HOD about successful reassignment
+            staffRepository.findHodByDepartmentId(originalStaff.getDepartment().getId(), Role.RoleType.HOD).ifPresent(hod -> {
+                notificationService.notifyHodOnSubstitution(updatedAlteration, hod);
+                emailService.sendAlterationNotificationToHod(hod, updatedAlteration);
+            });
             
             return updatedDTO;
         } else {
-            // No suitable substitute found, save as rejected
+            // No suitable substitute found among candidates
+            alteration.setStatus(Alteration.AlterationStatus.REJECTED);
+            alteration.setRemarks("Rejected by " + previousSubstitute.getStaffId() + ". No suitable alternative substitute found.");
             Alteration rejectedAlt = alterationRepository.save(alteration);
-            log.warn("No suitable substitute found for alteration: {}", alterationId);
+            
+            log.warn("No suitable alternative substitute found for alteration: {}", alterationId);
             AlterationDTO rejectedDTO = mapToDTO(rejectedAlt);
+            
             webSocketController.broadcastAlterationRejected(rejectedDTO);
+            webSocketController.broadcastToDepartment(originalStaff.getDepartment().getId(), "ALTERATION_REJECTED", rejectedDTO);
+            
+            // Notify HOD about rejection with no replacement
+            staffRepository.findHodByDepartmentId(originalStaff.getDepartment().getId(), Role.RoleType.HOD).ifPresent(hod -> {
+                notificationService.notifyHodOnSubstitution(rejectedAlt, hod);
+                emailService.sendAlterationNotificationToHod(hod, rejectedAlt);
+            });
+            
             return rejectedDTO;
         }
     }
@@ -494,7 +569,8 @@ public class AlterationService {
                 .subjectName(alteration.getTimetable() != null && alteration.getTimetable().getSubject() != null ?
                     alteration.getTimetable().getSubject().getSubjectName() : null)
                 .dayOrder(alteration.getTimetable() != null ? alteration.getTimetable().getDayOrder() : null)
-                .periodNumber(alteration.getTimetable() != null ? alteration.getTimetable().getPeriodNumber() : null)
+                .periodNumber(alteration.getPeriodNumber() != null ? alteration.getPeriodNumber() : 
+                    (alteration.getTimetable() != null ? alteration.getTimetable().getPeriodNumber() : null))
                 .alterationDate(alteration.getAlterationDate())
                 .absenceType(alteration.getAbsenceType() != null ? alteration.getAbsenceType().toString() : null)
                 .status(alteration.getStatus() != null ? alteration.getStatus().toString() : null)

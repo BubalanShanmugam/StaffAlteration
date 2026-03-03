@@ -83,18 +83,22 @@ public class AttendanceService {
                     periodsToStore = attendanceMarkDTO.getMeetingHours();
                 }
                 
+                // Normalize status: ON_DUTY (from UI) -> ONDUTY (enum value)
+                String statusStr = normalizeAttendanceStatus(attendanceMarkDTO.getStatus());
+                
                 attendance = Attendance.builder()
                         .staff(staff)
                         .attendanceDate(date)
-                        .status(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()))
+                        .status(Attendance.AttendanceStatus.valueOf(statusStr))
                         .dayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"))
                         .meetingHours(periodsToStore != null ? new java.util.HashSet<>(periodsToStore) : new java.util.HashSet<>())
                         .remarks(attendanceMarkDTO.getRemarks())
                         .build();
                 log.info("Created new attendance record with status: {}, periods: {}", attendance.getStatus(), periodsToStore);
             } else {
-                log.info("Updating existing attendance from status {} to {}", attendance.getStatus(), attendanceMarkDTO.getStatus());
-                attendance.setStatus(Attendance.AttendanceStatus.valueOf(attendanceMarkDTO.getStatus()));
+                String statusStr = normalizeAttendanceStatus(attendanceMarkDTO.getStatus());
+                log.info("Updating existing attendance from status {} to {}", attendance.getStatus(), statusStr);
+                attendance.setStatus(Attendance.AttendanceStatus.valueOf(statusStr));
                 attendance.setDayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"));
                 
                 // Handle selected periods or meeting hours
@@ -263,6 +267,18 @@ public class AttendanceService {
         }
         
         return periods;
+    }
+    
+    /**
+     * Normalize attendance status string for enum parsing.
+     * Handles ON_DUTY -> ONDUTY (enum uses ONDUTY, not ON_DUTY)
+     */
+    private String normalizeAttendanceStatus(String status) {
+        if (status == null || status.isEmpty()) return "PRESENT";
+        // Handle ON_DUTY, onDuty, On Duty -> ONDUTY (enum uses ONDUTY)
+        String normalized = status.replace("_", "").replace(" ", "").toUpperCase();
+        if ("ONDUTY".equals(normalized)) return "ONDUTY";
+        return status;
     }
     
     public AttendanceDTO getAttendance(Long attendanceId) {

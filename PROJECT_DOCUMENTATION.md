@@ -671,6 +671,451 @@ src/main/resources/db/migration/
 └── V5__Add_Meeting_Hours_Table.sql              # Meeting hours tracking
 ```
 
+### 3.1.4 Complete Application File Structure & 3-Layer Architecture
+
+#### Overview - File Structure Analysis (2 Paragraphs)
+
+The Staff Alteration System follows a well-organized, modular file structure that separates concerns across the entire application stack. The backend is structured using the industry-standard **3-layer architecture pattern**, where each layer has distinct responsibilities and minimal coupling. The presentation layer (controllers) handles HTTP requests and responses, the service layer manages all business logic and application operations, and the data access layer (repositories) handles all database interactions. This layered approach ensures that changes in one layer do not directly impact other layers, making the codebase maintainable and testable. The frontend complements this architecture with a component-based structure using React and TypeScript, organizing pages, reusable components, state management, and API integration into separate concerns. Configuration files, build tools, and database migration scripts are organized logically at the root level, providing clear separation between source code, resources, and build configurations.
+
+The complete application structure supports scalability, maintainability, and professional development practices through consistent naming conventions, logical directory organization, and clear dependency flow. Backend modules are organized by functional domain (staff, timetable, attendance, alteration, notification) with each domain having its own set of controllers, services, and repositories. Database migrations are version-controlled using Flyway, ensuring consistent database evolution across all environments. The frontend uses TypeScript for type safety and Vite as the build tool for optimal performance. All configuration files (Spring Boot properties, Tailwind CSS, TypeScript settings, Vite configuration) are version-controlled and environment-specific, enabling smooth deployment across development, staging, and production environments. The structure reflects best practices in REST API design, reactive programming patterns, and modern full-stack web development.
+
+---
+
+#### **3-LAYER ARCHITECTURE OF SPRING BOOT APPLICATION**
+
+The Staff Alteration System backend implements a **three-tier layered architecture**, which is the standard architectural pattern for enterprise Java applications built with Spring Boot.
+
+##### **Layer 1: Presentation Layer (REST Controllers)**
+
+**Location**: `backend/src/main/java/com/staffalteration/controller/`
+
+**Responsibility**: Handle HTTP requests and responses from the client
+
+**Components**:
+- **AuthController** - Manages user login, registration, token validation
+- **AttendanceController** - Receives attendance marking requests
+- **TimetableController** - Handles timetable view and operations
+- **TimetableTemplateController** - Manages timetable templates
+- **AlterationController** - Processes alteration requests and queries
+- **StaffController** - Manages staff-related endpoints
+- **ClassManagementController** - Handles class CRUD operations
+- **NotificationController** - Manages notification delivery
+- **LessonPlanController** - Handles lesson plan uploads/downloads
+- **ReportController** - Generates various reports
+- **HealthController** - Application health checks
+- **GlobalErrorController** - Centralized error handling
+- **WebSocketController** - Real-time communication endpoints
+
+**Characteristics**:
+- Receives HTTP requests from the React frontend
+- Validates input data type and format
+- Delegates business logic to the Service Layer
+- Returns JSON responses wrapped in `ApiResponseDTO`
+- Handles HTTP status codes (200, 201, 400, 404, 500, etc.)
+- Implements request/response DTOs for data transfer
+- Annotations: `@RestController`, `@RequestMapping`, `@PostMapping`, `@GetMapping`, `@PutMapping`, `@DeleteMapping`
+
+---
+
+##### **Layer 2: Service Layer (Business Logic)**
+
+**Location**: `backend/src/main/java/com/staffalteration/service/`
+
+**Responsibility**: Implement all business logic and application rules
+
+**Components**:
+- **AuthenticationService** - Authentication logic, JWT token generation, user validation
+- **AttendanceService** - Attendance marking logic, validation, trigger alteration creation
+- **TimetableService** - Timetable queries, updates, schedule management
+- **TimetableTemplateService** - Template CRUD operations and management
+- **AlterationService** - ⭐ **Key Component**: 6-Priority Algorithm, intelligent substitute staff selection
+  - Priority 1: Free class during same period
+  - Priority 2: Same subject no class assignment
+  - Priority 3: Same department staff
+  - Priority 4: Lowest workload staff
+  - Priority 5: Earliest available staff
+  - Priority 6: Manual alteration escalation
+- **StaffService** - Staff profile management, role assignments, workload calculation
+- **ClassManagementService** - Class CRUD operations and department assignments
+- **NotificationService** - Notification creation, queuing, delivery orchestration
+- **EmailService** - Email sending via SMTP
+- **SMSService** - SMS sending via SMS gateway
+- **ExcelExportService** - Reports generation in Excel format
+
+**Characteristics**:
+- Receives data from Presentation Layer via method calls
+- Contains business rules and validation logic
+- Calls Repository Layer to access/modify data
+- Implements data transformations and calculations
+- Handles exceptions and error scenarios
+- No direct HTTP handling or database queries
+- Uses DTOs to communicate with controllers
+- Implements @Service annotation
+- Often contains @Transactional methods
+
+---
+
+##### **Layer 3: Data Access Layer (Repositories)**
+
+**Location**: `backend/src/main/java/com/staffalteration/repository/`
+
+**Responsibility**: Handle all database interactions and queries
+
+**Components** (Using Spring Data JPA):
+- **UserRepository** - User entity queries
+  - `findByUsername(String username)`
+  - `findByEmail(String email)`
+  - `findActiveUsers()`
+  
+- **StaffRepository** - Staff entity queries
+  - `findByDepartment(Department dept)`
+  - `findAvailableStaff()`
+  - `findWithLowestWorkload()`
+  
+- **RoleRepository** - Role lookups
+  - `findByRoleName(String name)`
+  
+- **TimetableRepository** - Timetable queries
+  - `findByClassAndDay(ClassRoom cls, int day)`
+  - `findByStaffAndPeriod(Staff staff, int period)`
+  - `findWeeklySchedule(ClassRoom cls)`
+  
+- **TimetableTemplateRepository** - Template queries
+  - `findByClassAndDayToText()`
+  
+- **AlterationRepository** - Alteration queries
+  - `findByOriginalStaff(Staff staff)`
+  - `findBySubstituteStaff(Staff staff)`
+  - `findByStatus(AlterationStatus status)`
+  - `findByDateRange(LocalDate from, LocalDate to)`
+  
+- **AttendanceRepository** - Attendance records
+  - `findByStaffAndDate(Staff staff, LocalDate date)`
+  - `findByAttendanceType(AttendanceType type)`
+  
+- **NotificationRepository** - Notification queries
+  - `findByRecipientAndRead(Staff staff, Boolean read)`
+  - `findByRecipientOrderByDateDesc(Staff staff)`
+  
+- **ClassRoomRepository** - Class queries
+  - `findByDepartment(Department dept)`
+  
+- **SubjectRepository** - Subject queries
+  - `findByDepartment(Department dept)`
+  
+- **DepartmentRepository** - Department queries
+  - `findById(Long id)`
+  - `findAll()`
+  
+- **WorkloadSummaryRepository** - Workload analysis
+  - `findByStaffAndDate(Staff staff, LocalDate date)`
+  - `calculateDailyWorkload(Staff staff)`
+
+- **LessonPlanRepository** - Lesson plan files
+  - `findByAlteration(Alteration alt)`
+
+**Characteristics**:
+- Extends `JpaRepository<Entity, ID>` from Spring Data
+- Provides query methods for database operations
+- Uses JPQL or native SQL queries
+- Handles CREATE, READ, UPDATE, DELETE operations
+- Returns Entity objects (not DTOs)
+- No business logic - only data access
+- Automatically implements basic CRUD methods
+- Custom query methods defined with @Query annotation
+- Handles pagination and sorting
+
+---
+
+#### **DATA FLOW THROUGH THE 3 LAYERS**
+
+An example request flow for marking attendance:
+
+```
+1. PRESENTATION LAYER (Frontend)
+   User clicks "Mark Attendance" → POST /api/attendance/mark
+   Data: {date, status, dayType, remarks}
+   ↓
+
+2. PRESENTATION LAYER (Controller)
+   AttendanceController.markAttendance()
+   Validates input (date not in future, required fields present)
+   Converts to AttendanceMarkDTO
+   Calls attendanceService.markAttendance(dto)
+   ↓
+
+3. SERVICE LAYER
+   AttendanceService.markAttendance()
+   - Validates business rules (no duplicate, valid status)
+   - Fetches Staff entity via staffRepository
+   - Updates Attendance table
+   - If marked as ABSENT/LEAVE:
+     - Calls timetableService.getSchedule()
+     - Calls alteationService.findBestSubstitute()
+     - AlterationService runs 6-priority algorithm
+     - Creates Alteration records
+   - Calls notificationService.createNotification()
+   - Returns AlterationDTO objects
+   ↓
+
+4. PRESENTATION LAYER (Controller Response)
+   Returns HTTP 200 OK
+   Response Body:
+   {
+     "success": true,
+     "message": "Attendance marked successfully",
+     "data": {
+       "attendanceId": 123,
+       "alterationsCreated": 5,
+       "alterations": [...]
+     }
+   }
+   ↓
+
+5. FRONTEND (React)
+   Displays success toast
+   Updates dashboard with new alterations
+```
+
+---
+
+#### **COMPLETE APPLICATION FILE STRUCTURE**
+
+```
+StaffAlteration/
+│
+├── 📁 backend/
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/
+│   │   │   │   └── com/
+│   │   │   │       └── staffalteration/
+│   │   │   │           ├── 🎛️ PRESENTATION LAYER (Controllers)
+│   │   │   │           │   ├── AlterationController.java
+│   │   │   │           │   ├── AttendanceController.java
+│   │   │   │           │   ├── AuthController.java
+│   │   │   │           │   ├── ClassManagementController.java
+│   │   │   │           │   ├── GlobalErrorController.java
+│   │   │   │           │   ├── HealthController.java
+│   │   │   │           │   ├── LessonPlanController.java
+│   │   │   │           │   ├── NotificationController.java
+│   │   │   │           │   ├── ReportController.java
+│   │   │   │           │   ├── StaffController.java
+│   │   │   │           │   ├── TimetableController.java
+│   │   │   │           │   ├── TimetableTemplateController.java
+│   │   │   │           │   └── WebSocketController.java
+│   │   │   │           │
+│   │   │   │           ├── 🧠 SERVICE LAYER (Business Logic)
+│   │   │   │           │   ├── AlterationService.java          ⭐ Priority Algorithm
+│   │   │   │           │   ├── AttendanceService.java
+│   │   │   │           │   ├── AuthenticationService.java
+│   │   │   │           │   ├── ClassManagementService.java
+│   │   │   │           │   ├── EmailService.java
+│   │   │   │           │   ├── ExcelExportService.java
+│   │   │   │           │   ├── NotificationService.java
+│   │   │   │           │   ├── SMSService.java
+│   │   │   │           │   ├── StaffService.java
+│   │   │   │           │   ├── TimetableService.java
+│   │   │   │           │   └── TimetableTemplateService.java
+│   │   │   │           │
+│   │   │   │           ├── 💾 DATA ACCESS LAYER (Repositories)
+│   │   │   │           │   ├── AlterationRepository.java
+│   │   │   │           │   ├── AttendanceRepository.java
+│   │   │   │           │   ├── ClassRoomRepository.java
+│   │   │   │           │   ├── DepartmentRepository.java
+│   │   │   │           │   ├── LessonPlanRepository.java
+│   │   │   │           │   ├── NotificationRepository.java
+│   │   │   │           │   ├── RoleRepository.java
+│   │   │   │           │   ├── StaffRepository.java
+│   │   │   │           │   ├── SubjectRepository.java
+│   │   │   │           │   ├── TimetableRepository.java
+│   │   │   │           │   ├── TimetableTemplateRepository.java
+│   │   │   │           │   ├── UserRepository.java
+│   │   │   │           │   └── WorkloadSummaryRepository.java
+│   │   │   │           │
+│   │   │   │           ├── 📦 ENTITY LAYER (JPA Entities)
+│   │   │   │           │   ├── Alteration.java
+│   │   │   │           │   ├── Attendance.java
+│   │   │   │           │   ├── ClassRoom.java
+│   │   │   │           │   ├── Department.java
+│   │   │   │           │   ├── LessonPlan.java
+│   │   │   │           │   ├── Notification.java
+│   │   │   │           │   ├── Role.java
+│   │   │   │           │   ├── Staff.java
+│   │   │   │           │   ├── Subject.java
+│   │   │   │           │   ├── Timetable.java
+│   │   │   │           │   ├── TimetableStatus.java
+│   │   │   │           │   ├── TimetableTemplate.java
+│   │   │   │           │   ├── User.java
+│   │   │   │           │   └── WorkloadSummary.java
+│   │   │   │           │
+│   │   │   │           ├── 🔄 DTO LAYER (Data Transfer Objects)
+│   │   │   │           │   ├── AlterationDTO.java
+│   │   │   │           │   ├── ApiResponseDTO.java
+│   │   │   │           │   ├── AttendanceDTO.java
+│   │   │   │           │   ├── AttendanceMarkDTO.java
+│   │   │   │           │   ├── AuthRequestDTO.java
+│   │   │   │           │   ├── AuthResponseDTO.java
+│   │   │   │           │   ├── ClassRoomDTO.java
+│   │   │   │           │   ├── CreateClassDTO.java
+│   │   │   │           │   ├── CreateTimetableDTO.java
+│   │   │   │           │   ├── DepartmentDTO.java
+│   │   │   │           │   ├── NotificationDTO.java
+│   │   │   │           │   ├── StaffDTO.java
+│   │   │   │           │   ├── SubjectDTO.java
+│   │   │   │           │   ├── TimetableDTO.java
+│   │   │   │           │   ├── TimetableTemplateDTO.java
+│   │   │   │           │   ├── UserDTO.java
+│   │   │   │           │   └── WorkloadSummaryDTO.java
+│   │   │   │           │
+│   │   │   │           ├── 🔐 SECURITY LAYER
+│   │   │   │           │   ├── JwtTokenProvider.java
+│   │   │   │           │   ├── JwtAuthenticationFilter.java
+│   │   │   │           │   └── CustomUserDetailsService.java
+│   │   │   │           │
+│   │   │   │           ├── ⚙️ CONFIGURATION
+│   │   │   │           │   ├── SecurityConfig.java
+│   │   │   │           │   ├── CorsConfig.java
+│   │   │   │           │   └── WebSocketConfig.java
+│   │   │   │           │
+│   │   │   │           ├── 🔔 NOTIFICATION PROVIDERS
+│   │   │   │           │   ├── EmailNotificationProvider.java
+│   │   │   │           │   ├── SmsNotificationProvider.java
+│   │   │   │           │   └── NotificationFactory.java
+│   │   │   │           │
+│   │   │   │           ├── 🛠️ UTILITIES
+│   │   │   │           │   ├── Constants.java
+│   │   │   │           │   └── DateTimeUtil.java
+│   │   │   │           │
+│   │   │   │           ├── StaffAlterationApplication.java      (Spring Boot Entry Point)
+│   │   │   │           └── DataInitializer.java                 (Database Seeding)
+│   │   │   │
+│   │   │   └── resources/
+│   │   │       ├── application.properties                       # Spring Boot Configuration
+│   │   │       └── db/migration/                                # Flyway Database Migrations
+│   │   │           ├── V1__Create_Initial_Schema.sql            # 12 Core Tables
+│   │   │           ├── V2__Create_Timetable_Template.sql        # Template Table
+│   │   │           ├── V3__Fix_Timetable_Template_Staff_FK.sql  # Foreign Key Fix
+│   │   │           ├── V4__Add_Missing_Columns_v2.sql           # Schema Updates
+│   │   │           ├── V5__Add_Meeting_Hours_Table.sql          # Meeting Hours
+│   │   │           ├── V6__Add_Absence_Type_To_Alteration.sql   # Absence Type
+│   │   │           └── V7__Add_Period_Number_To_Alteration.sql  # Period Number
+│   │   │
+│   │   └── test/                                                # Unit & Integration Tests
+│   │
+│   ├── build.gradle                                             # Gradle Build Configuration
+│   └── settings.gradle                                          # Gradle Settings
+│
+├── 📁 frontend/
+│   ├── src/
+│   │   ├── 📄 main.tsx                                          # React Entry Point
+│   │   ├── 📄 App.tsx                                           # Root Component
+│   │   ├── 📄 index.css                                         # Global Styles
+│   │   │
+│   │   ├── 📁 pages/                                            # Page Components (11 pages)
+│   │   │   ├── LoginPage.tsx                                    # Authentication
+│   │   │   ├── DashboardPage.tsx                                # Main Dashboard
+│   │   │   ├── AttendancePage.tsx                               # Mark Attendance
+│   │   │   ├── AttendancePage_old.tsx                           # Legacy Version
+│   │   │   ├── TimetablesPage.tsx                               # View Timetables
+│   │   │   ├── TimetableManagementPage.tsx                      # Manage Timetables (HOD/ADMIN)
+│   │   │   ├── AlterationDashboardPage.tsx                      # Alterations Dashboard
+│   │   │   ├── StaffManagementPage.tsx                          # Staff CRUD (HOD/ADMIN)
+│   │   │   ├── ClassManagementPage.tsx                          # Class CRUD (HOD/ADMIN)
+│   │   │   ├── DayOrderSchedulePage.tsx                         # Weekly Schedule View
+│   │   │   ├── HodDashboardPage.tsx                             # HOD Statistics Dashboard
+│   │   │   └── SettingsPage.tsx                                 # User Settings
+│   │   │
+│   │   ├── 📁 components/                                       # Reusable React Components
+│   │   │   ├── common.tsx                                       # Common UI Components
+│   │   │   ├── Layout.tsx                                       # Main Layout Wrapper
+│   │   │   ├── ProtectedRoute.tsx                               # Route Protection Wrapper
+│   │   │   ├── TimetableTable.tsx                               # Timetable Display Component
+│   │   │   ├── CreateTimetableModal.tsx                         # Timetable Creation Modal
+│   │   │   └── ProfileModal.tsx                                 # User Profile Modal
+│   │   │
+│   │   ├── 📁 store/                                            # State Management (Zustand)
+│   │   │   ├── authStore.ts                                     # Authentication State
+│   │   │   └── timetableStore.ts                                # Timetable State
+│   │   │
+│   │   ├── 📁 api/                                              # API Integration
+│   │   │   ├── client.ts                                        # Axios Configuration & Instance
+│   │   │   └── index.ts                                         # API Endpoint Definitions
+│   │   │
+│   │   └── 📁 hooks/                                            # Custom React Hooks
+│   │
+│   ├── 📄 index.html                                            # HTML Entry Point
+│   ├── 📄 package.json                                          # NPM Dependencies
+│   ├── 📄 vite.config.ts                                        # Vite Build Configuration
+│   ├── 📄 vite.config.d.ts                                      # Vite Type Definitions
+│   ├── 📄 vite.config.js                                        # Vite JS Config
+│   ├── 📄 tailwind.config.js                                    # Tailwind CSS Configuration
+│   ├── 📄 postcss.config.js                                     # PostCSS Configuration
+│   ├── 📄 tsconfig.json                                         # TypeScript Configuration
+│   └── 📄 tsconfig.node.json                                    # TypeScript Config (Build Tools)
+│
+├── 📁 database/
+│   └── schema/                                                   # Database Schema Documentation
+│
+├── 📁 documentation/
+│   ├── API_DOCUMENTATION.md                                     # REST API Documentation
+│   ├── DATABASE_SCHEMA.md                                       # Database Structure
+│   └── DEPLOYMENT_GUIDE.md                                      # Deployment Instructions
+│
+├── 📄 PROJECT_DOCUMENTATION.md                                  # Complete Project Documentation
+├── 📄 README.md                                                 # Project Overview
+├── 📄 QUICK_START_NEW.md                                        # Quick Start Guide
+├── 📄 FINAL_SETUP.md                                            # Final Setup Instructions
+├── 📄 DEPLOYMENT.md                                             # Deployment Guide
+└── 📄 .gitignore                                                # Git Ignore Rules
+
+
+**LAYER RESPONSIBILITIES SUMMARY**:
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                     PRESENTATION LAYER (Controllers)                        │
+│  • Receives HTTP requests from frontend                                    │
+│  • Validates input format and structure                                    │
+│  • Delegates to Service Layer                                              │
+│  • Returns JSON responses with HTTP status codes                           │
+└────────────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+┌────────────────────────────────────────────────────────────────────────────┐
+│                  SERVICE LAYER (Business Logic)                            │
+│  • Implements application business rules                                   │
+│  • Orchestrates complex operations                                         │
+│  • Calls Repository Layer for data access                                  │
+│  • Handles transactional operations                                        │
+│  • No direct HTTP or database code                                         │
+└────────────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+┌────────────────────────────────────────────────────────────────────────────┐
+│            DATA ACCESS LAYER (Repositories/JPA)                            │
+│  • Queries and modifies database                                           │
+│  • Returns Entity objects                                                  │
+│  • Only data access logic                                                  │
+│  • Spring Data JPA handles SQL generation                                  │
+└────────────────────────────────────────────────────────────────────────────┘
+                              ↓ ↑
+┌────────────────────────────────────────────────────────────────────────────┐
+│                      DATABASE (PostgreSQL)                                 │
+│  • Persistent data storage                                                │
+│  • ACID transactions                                                       │
+│  • Schema versioning with Flyway                                           │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Benefits of 3-Layer Architecture:**
+✅ **Separation of Concerns** - Each layer has single responsibility
+✅ **Testability** - Each layer can be tested independently with mocks
+✅ **Maintainability** - Changes isolated to specific layer
+✅ **Reusability** - Service layer can support multiple controllers
+✅ **Scalability** - Easy to distribute layers across servers
+✅ **Security** - Each layer adds security validation
+✅ **Flexibility** - Can replace implementations without changing interfaces
+
+---
+
 ## 3.2 Input Design
 
 ### 3.2.1 User Input Interfaces

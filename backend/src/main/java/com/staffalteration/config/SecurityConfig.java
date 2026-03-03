@@ -57,7 +57,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/staff/**").hasRole("HOD")
                         .requestMatchers(HttpMethod.PUT, "/api/staff/**").hasRole("HOD")
                         .requestMatchers("/api/attendance/**").permitAll()
-                        .requestMatchers("/api/timetable/**").permitAll()
+                        .requestMatchers("/api/timetable/**", "/api/timetable-template/**").permitAll()
                         .requestMatchers("/api/alteration/**").permitAll()
                         .requestMatchers("/api/notification/**").permitAll()
                         .requestMatchers("/api/dashboard/**").permitAll()

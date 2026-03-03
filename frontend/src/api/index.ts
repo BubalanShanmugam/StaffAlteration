@@ -80,6 +80,7 @@ export interface AlterationDTO {
   dayOrder: number
   periodNumber: number
   alterationDate: string
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
   status: string
   remarks?: string
 }
@@ -147,6 +148,9 @@ export const attendanceAPI = {
     apiClient.post<any>('/attendance/upload-lesson-plan', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     }),
+
+  getLessonPlansForAlteration: (alterationId: number) =>
+    apiClient.get<any>(`/attendance/lesson-plans/alteration/${alterationId}`),
 }
 
 // Alteration APIs

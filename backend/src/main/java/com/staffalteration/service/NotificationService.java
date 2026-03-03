@@ -44,6 +44,28 @@ public class NotificationService {
         
         notificationRepository.save(notification);
     }
+
+    public void notifyHodOnSubstitution(Alteration alteration, Staff hod) {
+        if (hod == null) return;
+        
+        log.info("Creating HOD notification for substitution: {}", alteration.getId());
+        
+        Notification notification = Notification.builder()
+                .staff(hod)
+                .title("New Substitution Created")
+                .message(String.format("Staff %s is absent. Substitute %s assigned for %s (Period %d) on %s",
+                        alteration.getOriginalStaff().getFirstName() + " " + alteration.getOriginalStaff().getLastName(),
+                        alteration.getSubstituteStaff().getFirstName() + " " + alteration.getSubstituteStaff().getLastName(),
+                        alteration.getTimetable().getClassRoom().getClassCode(),
+                        alteration.getTimetable().getPeriodNumber(),
+                        alteration.getAlterationDate()))
+                .notificationType(Notification.NotificationType.ALTERATION_ASSIGNED)
+                .isRead(false)
+                .alteration(alteration)
+                .build();
+        
+        notificationRepository.save(notification);
+    }
     
     public List<NotificationDTO> getStaffNotifications(String staffId) {
         Staff staff = staffRepository.findByStaffId(staffId)

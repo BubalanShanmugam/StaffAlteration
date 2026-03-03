@@ -233,7 +233,7 @@ public class TimetableTemplateService {
     }
     
     /**
-     * Map entity to DTO
+     * Map entity to DTO (with null safety for optional relations)
      */
     private TimetableTemplateDTO mapToDTO(TimetableTemplate timetable) {
         return TimetableTemplateDTO.builder()
@@ -242,14 +242,15 @@ public class TimetableTemplateService {
             .classCode(timetable.getClassCode())
             .dayOrder(timetable.getDayOrder())
             .periodNumber(timetable.getPeriodNumber())
-            .subjectCode(timetable.getSubject().getSubjectCode())
-            .subjectName(timetable.getSubject().getSubjectName())
-            .staffId(timetable.getAssignedStaff().getStaffId())
-            .staffName(timetable.getAssignedStaff().getFirstName() + " " + timetable.getAssignedStaff().getLastName())
-            .createdBy(timetable.getCreatedBy().getUsername())
+            .subjectCode(timetable.getSubject() != null ? timetable.getSubject().getSubjectCode() : "")
+            .subjectName(timetable.getSubject() != null ? timetable.getSubject().getSubjectName() : "")
+            .staffId(timetable.getAssignedStaff() != null ? timetable.getAssignedStaff().getStaffId() : "")
+            .staffName(timetable.getAssignedStaff() != null ? 
+                timetable.getAssignedStaff().getFirstName() + " " + timetable.getAssignedStaff().getLastName() : "")
+            .createdBy(timetable.getCreatedBy() != null ? timetable.getCreatedBy().getUsername() : "")
             .createdAt(timetable.getCreatedAt())
             .updatedAt(timetable.getUpdatedAt())
-            .status(timetable.getStatus().toString())
+            .status(timetable.getStatus() != null ? timetable.getStatus().toString() : "ACTIVE")
             .remarks(timetable.getRemarks())
             .build();
     }

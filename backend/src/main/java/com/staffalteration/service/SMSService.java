@@ -97,6 +97,29 @@ public class SMSService {
     }
 
     /**
+     * Send SMS notification to HOD when substitution is created
+     */
+    public void notifyHodOnSubstitution(String hodPhone, String originalStaffName,
+                                        String substituteStaffName, String classCode, String alterationDate) {
+        if (!smsEnabled) {
+            log.debug("SMS notifications are disabled");
+            return;
+        }
+
+        try {
+            String message = String.format(
+                "Substitution Alert: %s absent on %s. %s assigned for class %s. Please review in the system.",
+                originalStaffName, alterationDate, substituteStaffName, classCode
+            );
+            
+            sendSMS(hodPhone, message);
+            log.info("HOD substitution SMS sent to {}", hodPhone);
+        } catch (Exception e) {
+            log.error("Failed to send HOD substitution SMS to {}: {}", hodPhone, e.getMessage());
+        }
+    }
+
+    /**
      * Send SMS notification to HOD about inability to alter class
      */
     public void notifyHodUnableToAlter(String hodPhone, String classCode, String alterationDate) {

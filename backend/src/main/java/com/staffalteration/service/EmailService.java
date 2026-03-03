@@ -1,7 +1,9 @@
 package com.staffalteration.service;
 
 import com.staffalteration.entity.Alteration;
+import com.staffalteration.entity.LessonPlan;
 import com.staffalteration.entity.Staff;
+import com.staffalteration.repository.LessonPlanRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,12 +11,17 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @Slf4j
 public class EmailService {
     
     @Autowired(required = false)
     private JavaMailSender mailSender;
+    
+    @Autowired
+    private LessonPlanRepository lessonPlanRepository;
     
     @Value("${spring.mail.from:noreply@staffalteration.com}")
     private String fromEmail;
@@ -108,6 +115,73 @@ public class EmailService {
         );
         
         sendEmail(staff.getEmail(), subject, body);
+    }
+
+    public void sendAlterationNotificationToHod(Staff hod, Alteration alteration) {
+        if (hod == null || hod.getEmail() == null) return;
+        
+        String subject = "Substitution Alert - Staff Alteration Created";
+        String body = String.format(
+            "Dear %s,\n\n" +
+            "A new substitution has been created in your department:\n\n" +
+            "Original Staff (Absent): %s (%s)\n" +
+            "Substitute Staff: %s (%s)\n" +
+            "Class: %s\n" +
+            "Subject: %s\n" +
+            "Period: %d\n" +
+            "Date: %s\n\n" +
+            "Please review in the Staff Alteration System.\n\n" +
+            "Best regards,\n" +
+            "Staff Alteration System",
+            hod.getFirstName(),
+            alteration.getOriginalStaff().getFirstName() + " " + alteration.getOriginalStaff().getLastName(),
+            alteration.getOriginalStaff().getStaffId(),
+            alteration.getSubstituteStaff().getFirstName() + " " + alteration.getSubstituteStaff().getLastName(),
+            alteration.getSubstituteStaff().getStaffId(),
+            alteration.getTimetable().getClassRoom().getClassName(),
+            alteration.getTimetable().getSubject().getSubjectName(),
+            alteration.getTimetable().getPeriodNumber(),
+            alteration.getAlterationDate()
+        );
+        
+        sendEmail(hod.getEmail(), subject, body);
+    }
+
+    public void sendLessonPlanToSubstitute(Alteration alteration) {
+        Staff substituteStaff = alteration.getSubstituteStaff();
+        if (substituteStaff == null || substituteStaff.getEmail() == null) return;
+        
+        List<LessonPlan> lessonPlans = lessonPlanRepository.findByStaffIdAndLessonDate(
+            alteration.getOriginalStaff().getId(),
+            alteration.getAlterationDate()
+        );
+        
+        if (lessonPlans.isEmpty()) return;
+        
+        StringBuilder filesList = new StringBuilder();
+        for (LessonPlan lp : lessonPlans) {
+            filesList.append("  - ").append(lp.getOriginalFileName()).append("\n");
+            if (lp.getNotes() != null && !lp.getNotes().isEmpty()) {
+                filesList.append("    Notes: ").append(lp.getNotes()).append("\n");
+            }
+        }
+        
+        String subject = "Lesson Plan Available - Class Assignment";
+        String body = String.format(
+            "Dear %s,\n\n" +
+            "You have been assigned to teach %s (%s) on %s.\n\n" +
+            "The original staff has uploaded the following lesson plan(s) for your reference:\n\n%s\n" +
+            "Please log in to the Staff Alteration System to download these materials from your Alterations page.\n\n" +
+            "Best regards,\n" +
+            "Staff Alteration System",
+            substituteStaff.getFirstName(),
+            alteration.getTimetable().getClassRoom().getClassCode(),
+            alteration.getTimetable().getSubject().getSubjectName(),
+            alteration.getAlterationDate(),
+            filesList.toString()
+        );
+        
+        sendEmail(substituteStaff.getEmail(), subject, body);
     }
     
     private void sendEmail(String to, String subject, String body) {

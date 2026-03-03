@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react'
-import { AlertCircle, CheckCircle, Clock, FileText, Download, Eye } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { AlertCircle, CheckCircle, Clock, FileText, Download, Eye, RotateCcw } from 'lucide-react'
 import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
-import { alterationAPI } from '../api'
+import { alterationAPI, attendanceAPI, lessonPlanAPI } from '../api'
 import { useAuthStore } from '../store/authStore'
 import { useAlterationWebSocket } from '../hooks/useAlterationWebSocket'
+import { AlterationCalendar } from '../components/AlterationCalendar'
 
 interface Alteration {
   id: number
@@ -22,6 +23,12 @@ interface Alteration {
   remarks?: string
 }
 
+interface DateInfo {
+  date: string
+  type: 'absence' | 'substitution' // absence = red, substitution = yellow
+  count: number
+}
+
 export const AlterationDashboardPage: React.FC = () => {
   const user = useAuthStore((state) => state.user)
   const [alterations, setAlterations] = useState<Alteration[]>([])
@@ -31,6 +38,8 @@ export const AlterationDashboardPage: React.FC = () => {
   const [showDetails, setShowDetails] = useState<number | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'monthly' | 'weekly'>('monthly')
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   useEffect(() => {
     loadAlterations()
@@ -39,8 +48,14 @@ export const AlterationDashboardPage: React.FC = () => {
   // Set up WebSocket listeners for real-time updates
   useAlterationWebSocket(
     (data: Alteration) => {
-      // New alteration created
-      setAlterations((prev) => [data, ...prev])
+      // New alteration created - only add if relevant to current user
+      const isRelevant = data.originalStaffId === user?.staffId || data.substituteStaffId === user?.staffId
+      if (isRelevant) {
+        setAlterations((prev) => {
+          if (prev.some((a) => a.id === data.id)) return prev
+          return [data, ...prev]
+        })
+      }
     },
     (data: Alteration) => {
       // Alteration updated
@@ -48,7 +63,7 @@ export const AlterationDashboardPage: React.FC = () => {
         prev.map((alt) => (alt.id === data.id ? data : alt))
       )
     },
-    (data: Alteration) => {
+    () => {
       // Alteration rejected - reload to get new assignments
       loadAlterations()
     }
@@ -60,10 +75,43 @@ export const AlterationDashboardPage: React.FC = () => {
       setLoading(true)
       const response = await alterationAPI.getByStaff(user.id.toString())
       setAlterations(response.data.data || [])
+      console.log('Loaded alterations:', response.data.data)
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load alterations')
+      console.error('Failed to load alterations:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Categorize alterations for calendar display
+  const dateInfoByType = useMemo(() => {
+    const dates: { [key: string]: DateInfo } = {}
+    
+    alterations.forEach((alt) => {
+      const key = alt.alterationDate
+      const isOriginalStaff = alt.originalStaffId === user?.staffId
+      const type = isOriginalStaff ? 'absence' : 'substitution'
+      
+      if (!dates[key]) {
+        dates[key] = { date: key, type, count: 0 }
+      }
+      dates[key].count++
+    })
+    
+    return dates
+  }, [alterations, user?.staffId])
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      await loadAlterations()
+      setSuccess('✅ Alterations refreshed!')
+      setTimeout(() => setSuccess(null), 2000)
+    } catch (err) {
+      setError('Failed to refresh alterations')
+    } finally {
+      setIsRefreshing(false)
     }
   }
 
@@ -84,22 +132,21 @@ export const AlterationDashboardPage: React.FC = () => {
     }
   }
 
-  // Get unique dates from alterations and sort them
-  const uniqueDates = Array.from(
-    new Set(alterations.map((alt) => alt.alterationDate))
-  ).sort()
-
-  // Filter alterations by selected date
-  const filteredAlterations = selectedDate
-    ? alterations.filter((alt) => alt.alterationDate === selectedDate)
-    : alterations
+  // Filter alterations by selected date and active tab
+  const filteredAlterations = alterations.filter((alt) => {
+    const dateMatch = !selectedDate || alt.alterationDate === selectedDate
+    return dateMatch
+  })
 
   const handleAcknowledge = async (alterationId: number) => {
     try {
       await alterationAPI.updateStatus(alterationId, 'ACKNOWLEDGED')
       loadAlterations()
+      setSuccess('✅ Alteration acknowledged!')
+      setTimeout(() => setSuccess(null), 2000)
     } catch (err) {
       console.error('Failed to acknowledge alteration')
+      setError('Failed to acknowledge alteration')
     }
   }
 
@@ -123,11 +170,6 @@ export const AlterationDashboardPage: React.FC = () => {
     return icons[status]
   }
 
-  const getDayName = (dayOrder: number) => {
-    const days = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-    return days[dayOrder] || `Day ${dayOrder}`
-  }
-
   const getPeriodDisplay = (alteration: Alteration) => {
     // Map absence type to user-friendly display
     const absenceTypeMap: { [key: string]: string } = {
@@ -135,10 +177,10 @@ export const AlterationDashboardPage: React.FC = () => {
       'AN': 'Half Day Morning Leave (9AM - 1PM)',
       'AF': 'Half Day Afternoon Leave (1PM - 5PM)',
       'ONDUTY': 'On Duty - Full Day',
-      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent (${getPeriodTime(alteration.periodNumber)})`
+      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent`
     }
     
-    return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber} (${getPeriodTime(alteration.periodNumber)})`
+    return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber}`
   }
 
   const getPeriodTime = (periodNumber: number) => {
@@ -157,9 +199,23 @@ export const AlterationDashboardPage: React.FC = () => {
     <Layout>
       <div className="space-y-6 animate-fadeIn">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Staff Alterations</h1>
-          <p className="text-slate-600 mt-1">View and manage your class alterations</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Staff Alterations</h1>
+            <p className="text-slate-600 mt-1">View and manage your class alterations</p>
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              isRefreshing
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            <RotateCcw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
 
         {error && (
@@ -204,35 +260,37 @@ export const AlterationDashboardPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Date Filter Dropdown */}
-        {uniqueDates.length > 0 && (
-          <Card className="p-4">
-            <div className="flex items-center justify-between gap-4">
-              <label className="font-medium text-slate-700">Filter by Date:</label>
-              <select
-                value={selectedDate || ''}
-                onChange={(e) => setSelectedDate(e.target.value || null)}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">All Dates ({alterations.length} alterations)</option>
-                {uniqueDates.map((date) => {
-                  const count = alterations.filter((alt) => alt.alterationDate === date).length
-                  return (
-                    <option key={date} value={date}>
-                      {new Date(date).toLocaleDateString('en-US', {
-                        weekday: 'short',
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}{' '}
-                      ({count} alterations)
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
-          </Card>
-        )}
+        {/* View Mode Toggle */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setViewMode('monthly')}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              viewMode === 'monthly'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            Monthly
+          </button>
+          <button
+            onClick={() => setViewMode('weekly')}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              viewMode === 'weekly'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            Weekly
+          </button>
+          {selectedDate && (
+            <button
+              onClick={() => setSelectedDate(null)}
+              className="ml-auto px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 font-medium transition-colors"
+            >
+              Clear Selection
+            </button>
+          )}
+        </div>
 
         {/* Content */}
         {loading ? (
@@ -249,147 +307,222 @@ export const AlterationDashboardPage: React.FC = () => {
                 : 'No substitute assignments'}
             </p>
           </Card>
-        ) : filteredAlterations.length === 0 ? (
-          <Card className="p-12 text-center">
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <p className="text-slate-600 font-medium">
-              No alterations for the selected date
-            </p>
-          </Card>
         ) : (
-          <div className="space-y-4">
-            {filteredAlterations.map((alteration) => (
-              <Card
-                key={alteration.id}
-                className={`p-6 border-l-4 ${
-                  alteration.status === 'ASSIGNED'
-                    ? 'border-l-yellow-500'
-                    : alteration.status === 'ACKNOWLEDGED'
-                      ? 'border-l-blue-500'
-                      : 'border-l-green-500'
-                } hover:shadow-lg transition-shadow`}
-              >
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Calendar */}
+            <div className="lg:col-span-1">
+              <AlterationCalendar
+                alterations={filteredAlterations}
+                dateInfoByType={dateInfoByType}
+                onDateSelect={setSelectedDate}
+                selectedDate={selectedDate}
+                viewMode={viewMode}
+              />
+            </div>
+
+            {/* Alterations List */}
+            <div className="lg:col-span-2">
+              {selectedDate ? (
                 <div className="space-y-4">
-                  {/* Header */}
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-slate-900 text-lg">
-                          {alteration.subjectName}
-                        </h3>
-                        <span
-                          className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(
-                            alteration.status
-                          )}`}
-                        >
-                          {getStatusIcon(alteration.status)}
-                          {alteration.status}
-                        </span>
-                      </div>
-                      <p className="text-sm text-slate-600">Class: {alteration.classCode}</p>
-                    </div>
-                    <button
-                      onClick={() =>
-                        setShowDetails(showDetails === alteration.id ? null : alteration.id)
-                      }
-                      className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                    >
-                      <Eye className="w-5 h-5 text-slate-600" />
-                    </button>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-blue-900">
+                      Alterations for {new Date(selectedDate).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </h3>
+                    <p className="text-sm text-blue-700 mt-1">
+                      {filteredAlterations.length} alteration{filteredAlterations.length !== 1 ? 's' : ''}
+                    </p>
                   </div>
 
-                  {/* Details Row */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <p className="text-slate-500 font-medium">Date</p>
-                      <p className="text-slate-900">
-                        {new Date(alteration.alterationDate).toLocaleDateString('en-US', {
-                          weekday: 'short',
-                          month: 'short',
-                          day: 'numeric',
-                        })}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-slate-500 font-medium">Absence Type</p>
-                      <p className="text-slate-900 font-medium">
-                        <span className={`px-2 py-1 rounded ${
-                          alteration.absenceType === 'FN' ? 'bg-red-100 text-red-700' :
-                          alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
-                          alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
-                          alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
-                          'bg-yellow-100 text-yellow-700'
-                        }`}>
-                          {getPeriodDisplay(alteration)}
-                        </span>
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-slate-500 font-medium">
-                        {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}
-                      </p>
-                      <p className="text-slate-900">
-                        {activeTab === 'as-original'
-                          ? alteration.substituteStaffName
-                          : alteration.originalStaffName}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Expanded Details */}
-                  {showDetails === alteration.id && (
-                    <div className="mt-4 pt-4 border-t border-slate-200 space-y-4">
-                      {alteration.remarks && (
-                        <div>
-                          <p className="text-sm font-medium text-slate-700 mb-1">Notes</p>
-                          <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded">
-                            {alteration.remarks}
-                          </p>
-                        </div>
-                      )}
-
-                      <div className="flex flex-wrap gap-3">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => {
-                            /* TODO: Download lesson plans */
-                          }}
+                  {filteredAlterations.length === 0 ? (
+                    <Card className="p-8 text-center">
+                      <CheckCircle className="w-10 h-10 text-green-500 mx-auto mb-3" />
+                      <p className="text-slate-600">No alterations for this date</p>
+                    </Card>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredAlterations.map((alteration) => (
+                        <Card
+                          key={alteration.id}
+                          className={`p-4 border-l-4 transition-all hover:shadow-md ${
+                            alteration.status === 'ASSIGNED'
+                              ? 'border-l-yellow-500'
+                              : alteration.status === 'ACKNOWLEDGED'
+                                ? 'border-l-blue-500'
+                                : 'border-l-green-500'
+                          }`}
                         >
-                          <Download className="w-4 h-4" />
-                          Lesson Plans
-                        </Button>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <div>
+                                  <h4 className="font-semibold text-slate-900">{alteration.subjectName}</h4>
+                                  <p className="text-xs text-slate-500">Class: {alteration.classCode}</p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 text-sm mt-3">
+                                <div>
+                                  <p className="text-slate-500 font-medium">Absence Type</p>
+                                  <p className="text-slate-900 font-semibold">
+                                    <span className={`px-2 py-1 rounded text-xs ${
+                                      alteration.absenceType === 'FN' ? 'bg-red-100 text-red-700' :
+                                      alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
+                                      alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
+                                      alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                                      'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {getPeriodDisplay(alteration)}
+                                    </span>
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-slate-500 font-medium">
+                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}
+                                  </p>
+                                  <p className="text-slate-900">
+                                    {activeTab === 'as-original'
+                                      ? alteration.substituteStaffName
+                                      : alteration.originalStaffName}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="ml-4 flex flex-col gap-2">
+                              <span
+                                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(
+                                  alteration.status
+                                )}`}
+                              >
+                                {getStatusIcon(alteration.status)}
+                                {alteration.status}
+                              </span>
+                              <button
+                                onClick={() =>
+                                  setShowDetails(showDetails === alteration.id ? null : alteration.id)
+                                }
+                                className="p-1 hover:bg-slate-100 rounded transition-colors"
+                              >
+                                <Eye className="w-4 h-4 text-slate-600" />
+                              </button>
+                            </div>
+                          </div>
 
-                        {activeTab === 'as-substitute' &&
-                          alteration.status === 'ASSIGNED' && (
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                className="gap-2"
-                                onClick={() => handleAcknowledge(alteration.id)}
-                              >
-                                <CheckCircle className="w-4 h-4" />
-                                Acknowledge
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="danger"
-                                className="gap-2"
-                                onClick={() => handleReject(alteration.id)}
-                              >
-                                ❌ Reject
-                              </Button>
+                          {/* Expanded Details */}
+                          {showDetails === alteration.id && (
+                            <div className="mt-4 pt-4 border-t border-slate-200 space-y-4">
+                              {alteration.remarks && (
+                                <div>
+                                  <p className="text-sm font-medium text-slate-700 mb-1">Notes</p>
+                                  <p className="text-sm text-slate-600 bg-slate-50 p-2 rounded">
+                                    {alteration.remarks}
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="gap-2"
+                                  onClick={async () => {
+                                    try {
+                                      const res = await attendanceAPI.getLessonPlansForAlteration(alteration.id)
+                                      const plans = res.data?.data || []
+                                      if (plans.length === 0) {
+                                        alert('No lesson plans uploaded for this alteration')
+                                        return
+                                      }
+                                      for (const lp of plans) {
+                                        const blob = await lessonPlanAPI.downloadFile(lp.id).then((r) => r.data)
+                                        const url = window.URL.createObjectURL(blob)
+                                        const a = document.createElement('a')
+                                        a.href = url
+                                        a.download = lp.originalFileName || `lesson-plan-${lp.id}`
+                                        document.body.appendChild(a)
+                                        a.click()
+                                        document.body.removeChild(a)
+                                        window.URL.revokeObjectURL(url)
+                                      }
+                                    } catch (err) {
+                                      console.error('Failed to download lesson plans:', err)
+                                      alert('Failed to download lesson plans')
+                                    }
+                                  }}
+                                >
+                                  <Download className="w-4 h-4" />
+                                  Lesson Plans
+                                </Button>
+
+                                {activeTab === 'as-substitute' &&
+                                  alteration.status === 'ASSIGNED' && (
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        className="gap-2"
+                                        onClick={() => handleAcknowledge(alteration.id)}
+                                      >
+                                        <CheckCircle className="w-4 h-4" />
+                                        Acknowledge
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="danger"
+                                        className="gap-2"
+                                        onClick={() => handleReject(alteration.id)}
+                                      >
+                                        ❌ Reject
+                                      </Button>
+                                    </div>
+                                  )}
+                              </div>
                             </div>
                           )}
-                      </div>
+                        </Card>
+                      ))}
                     </div>
                   )}
                 </div>
-              </Card>
-            ))}
+              ) : (
+                <Card className="p-12 text-center">
+                  <Clock className="w-12 h-12 text-blue-500 mx-auto mb-4" />
+                  <p className="text-slate-600 font-medium">Select a date from the calendar to view alterations</p>
+                </Card>
+              )}
+            </div>
           </div>
         )}
+
+        {/* Calendar Legend */}
+        <Card className="p-6 bg-slate-50 border-2 border-slate-300">
+          <h3 className="font-semibold text-slate-900 mb-4">📅 Calendar Color Guide</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-300">
+              <span className="text-2xl">🔴</span>
+              <div>
+                <p className="font-semibold text-red-900">RED - ABSENCE</p>
+                <p className="text-sm text-red-800">You are absent/on-duty (original staff)</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-yellow-50 rounded-lg border border-yellow-300">
+              <span className="text-2xl">🟡</span>
+              <div>
+                <p className="font-semibold text-yellow-900">YELLOW - SUBSTITUTION</p>
+                <p className="text-sm text-yellow-800">You need to substitute for another staff</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-300">
+              <span className="text-2xl">🔵</span>
+              <div>
+                <p className="font-semibold text-blue-900">BLUE - SELECTED</p>
+                <p className="text-sm text-blue-800">You clicked on this date</p>
+              </div>
+            </div>
+          </div>
+        </Card>
 
         {/* Help Section */}
         {activeTab === 'as-original' && (
