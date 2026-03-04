@@ -23,6 +23,7 @@ public class TimetableTemplateService {
     private final SubjectRepository subjectRepository;
     private final UserRepository userRepository;
     private final ClassRoomRepository classRoomRepository;
+    private final TimetableRepository timetableRepository;
     
     /**
      * Create a new timetable entry
@@ -73,7 +74,10 @@ public class TimetableTemplateService {
         
         TimetableTemplate saved = timetableTemplateRepository.save(timetable);
         log.info("Timetable created successfully with ID: {}", saved.getId());
-        
+
+        // Keep timetable table in sync so the alteration algorithm finds the slot
+        syncTimetableFromTemplate(saved);
+
         return mapToDTO(saved);
     }
     
@@ -158,7 +162,10 @@ public class TimetableTemplateService {
         
         TimetableTemplate updated = timetableTemplateRepository.save(timetable);
         log.info("Timetable updated successfully");
-        
+
+        // Re-sync the timetable row
+        syncTimetableFromTemplate(updated);
+
         return mapToDTO(updated);
     }
     
@@ -190,6 +197,12 @@ public class TimetableTemplateService {
         timetable.setUpdatedAt(LocalDateTime.now());
         
         TimetableTemplate updated = timetableTemplateRepository.save(timetable);
+
+        // If activating, ensure timetable row exists
+        if (newStatus == TimetableStatus.ACTIVE) {
+            syncTimetableFromTemplate(updated);
+        }
+
         return mapToDTO(updated);
     }
     
@@ -232,6 +245,47 @@ public class TimetableTemplateService {
         }
     }
     
+    /**
+     * Ensure the legacy 'timetable' table has a row matching this template.
+     * AlterationService queries the timetable table (via TimetableRepository); this method
+     * keeps them in sync so that alterations are created correctly when attendance is marked.
+     */
+    private void syncTimetableFromTemplate(TimetableTemplate template) {
+        if (template.getAssignedStaff() == null) return;
+        try {
+            Staff staff = template.getAssignedStaff();
+            List<Timetable> existing = timetableRepository.findByStaffAndPeriod(
+                    staff.getId(), template.getDayOrder(), template.getPeriodNumber());
+
+            ClassRoom classRoom = classRoomRepository
+                    .findByClassCode(template.getClassCode()).orElse(null);
+
+            if (existing.isEmpty()) {
+                Timetable timetable = Timetable.builder()
+                        .staff(staff)
+                        .subject(template.getSubject())
+                        .classRoom(classRoom)
+                        .dayOrder(template.getDayOrder())
+                        .periodNumber(template.getPeriodNumber())
+                        .build();
+                timetableRepository.save(timetable);
+                log.info("Synced timetable row for staff={}, day={}, period={}",
+                         staff.getStaffId(), template.getDayOrder(), template.getPeriodNumber());
+            } else {
+                // Update subject / classRoom in case they changed
+                Timetable timetable = existing.get(0);
+                timetable.setSubject(template.getSubject());
+                timetable.setClassRoom(classRoom);
+                timetableRepository.save(timetable);
+                log.info("Updated timetable row id={} for staff={}, day={}, period={}",
+                         timetable.getId(), staff.getStaffId(), template.getDayOrder(), template.getPeriodNumber());
+            }
+        } catch (Exception e) {
+            log.error("syncTimetableFromTemplate failed for template id={}: {}",
+                      template.getId(), e.getMessage());
+        }
+    }
+
     /**
      * Map entity to DTO (with null safety for optional relations)
      */

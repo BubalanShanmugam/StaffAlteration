@@ -3,7 +3,9 @@ package com.staffalteration.controller;
 import com.staffalteration.dto.AlterationDTO;
 import com.staffalteration.dto.ApiResponseDTO;
 import com.staffalteration.entity.AlterationAudit;
+import com.staffalteration.entity.Staff;
 import com.staffalteration.repository.AlterationAuditRepository;
+import com.staffalteration.repository.StaffRepository;
 import com.staffalteration.service.AlterationService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +30,9 @@ public class AlterationController {
     
     @Autowired
     private AlterationAuditRepository alterationAuditRepository;
+
+    @Autowired
+    private StaffRepository staffRepository;
     
     @GetMapping("/date/{date}")
     public ResponseEntity<ApiResponseDTO<?>> getAlterationsByDate(@PathVariable LocalDate date) {
@@ -44,10 +49,31 @@ public class AlterationController {
     
     @GetMapping("/staff/{staffId}")
     public ResponseEntity<ApiResponseDTO<?>> getAlterationsByStaff(@PathVariable String staffId) {
-        log.info("Fetching alterations for staff: {}", staffId);
+        log.info("Fetching alterations for staff param: {}", staffId);
         
         try {
-            List<AlterationDTO> response = alterationService.getAlterationsByStaff(Long.parseLong(staffId));
+            Long resolvedStaffId;
+            try {
+                long parsedId = Long.parseLong(staffId);
+                // Frontend sends user.id (User entity PK). Resolve to Staff.id via userId lookup.
+                java.util.Optional<Staff> staffByUserId = staffRepository.findByUserId(parsedId);
+                if (staffByUserId.isPresent()) {
+                    resolvedStaffId = staffByUserId.get().getId();
+                    log.info("Resolved userId={} to staffId={} (staffCode={})", parsedId, resolvedStaffId, staffByUserId.get().getStaffId());
+                } else {
+                    // Fallback: treat as Staff.id directly
+                    resolvedStaffId = parsedId;
+                    log.info("No staff found by userId={}, treating as Staff.id directly", parsedId);
+                }
+            } catch (NumberFormatException e) {
+                // String staffId like "STAFF001" — look up by staffId field
+                Staff s = staffRepository.findByStaffId(staffId)
+                    .orElseThrow(() -> new RuntimeException("Staff not found: " + staffId));
+                resolvedStaffId = s.getId();
+                log.info("Resolved staffCode={} to staffId={}", staffId, resolvedStaffId);
+            }
+            List<AlterationDTO> response = alterationService.getAlterationsByStaff(resolvedStaffId);
+            log.info("Returning {} alterations for resolvedStaffId={}", response.size(), resolvedStaffId);
             return ResponseEntity.ok(new ApiResponseDTO<>(200, "Alterations retrieved", response));
         } catch (Exception e) {
             log.error("Error fetching alterations by staff: {}", e.getMessage(), e);

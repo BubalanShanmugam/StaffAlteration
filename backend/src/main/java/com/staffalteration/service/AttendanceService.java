@@ -16,6 +16,9 @@ import com.staffalteration.repository.LessonPlanRepository;
 import com.staffalteration.repository.ClassRoomRepository;
 import com.staffalteration.repository.SubjectRepository;
 import com.staffalteration.repository.AlterationRepository;
+import com.staffalteration.repository.TimetableTemplateRepository;
+import com.staffalteration.entity.TimetableTemplate;
+import com.staffalteration.entity.TimetableStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -56,6 +59,9 @@ public class AttendanceService {
     
     @Autowired
     private AlterationService alterationService;
+
+    @Autowired
+    private TimetableTemplateRepository timetableTemplateRepository;
     
     public AttendanceDTO markAttendance(AttendanceMarkDTO attendanceMarkDTO) {
         log.info("Marking attendance for staff: {}, date: {}, status: {}", 
@@ -98,7 +104,14 @@ public class AttendanceService {
             } else {
                 String statusStr = normalizeAttendanceStatus(attendanceMarkDTO.getStatus());
                 log.info("Updating existing attendance from status {} to {}", attendance.getStatus(), statusStr);
-                attendance.setStatus(Attendance.AttendanceStatus.valueOf(statusStr));
+                Attendance.AttendanceStatus newStatus = Attendance.AttendanceStatus.valueOf(statusStr);
+                
+                // Always cancel existing alterations before re-processing
+                // If new status needs alteration → cancel old ones so fresh ones are created below
+                // If new status is PRESENT → cancel and no new ones will be created
+                cancelExistingAlterations(staff, date);
+                
+                attendance.setStatus(newStatus);
                 attendance.setDayType(Attendance.DayType.valueOf(attendanceMarkDTO.getDayType() != null ? attendanceMarkDTO.getDayType() : "FULL_DAY"));
                 
                 // Handle selected periods or meeting hours
@@ -114,15 +127,6 @@ public class AttendanceService {
                 }
                 
                 attendance.setRemarks(attendanceMarkDTO.getRemarks());
-                
-                // Cancel existing alterations if status changed
-                if (!attendance.getStatus().equals(Attendance.AttendanceStatus.LEAVE) &&
-                    !attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY) &&
-                    !attendance.getStatus().equals(Attendance.AttendanceStatus.ABSENT) &&
-                    !attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING) &&
-                    !attendance.getStatus().equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
-                    cancelExistingAlterations(staff, date);
-                }
             }
             
             Attendance savedAttendance = attendanceRepository.save(attendance);
@@ -144,7 +148,12 @@ public class AttendanceService {
                     periodsToProcess = attendanceMarkDTO.getAbsentPeriods();
                 }
                 
-                triggerAlterationProcess(staff, date, savedAttendance, periodsToProcess);
+                try {
+                    triggerAlterationProcess(staff, date, savedAttendance, periodsToProcess);
+                } catch (Exception e) {
+                    log.error("Alteration process failed for staff {} on {} (attendance still saved): {}",
+                              staff.getStaffId(), date, e.getMessage(), e);
+                }
             }
         }
         
@@ -152,56 +161,98 @@ public class AttendanceService {
     }
     
     private void triggerAlterationProcess(Staff staff, LocalDate date, Attendance attendance, Set<Integer> absentPeriods) {
-        log.info("Triggering alteration process for staff: {} on date: {}, status: {}", 
+        log.info("Triggering alteration process for staff: {} on date: {}, status: {}",
                  staff.getStaffId(), date, attendance.getStatus());
-        
-        // Get day of week (1=Monday, 7=Sunday in Java DayOfWeek)
-        int dayOfWeek = date.getDayOfWeek().getValue(); // 1=Monday, 7=Sunday
-        log.info("Current day of week: {} (1=Monday, 7=Sunday)", dayOfWeek);
-        
-        // Get all timetables for this staff on this day of week
-        List<Timetable> timetables = timetableRepository.findByStaffId(staff.getId());
-        log.info("Total timetables found for staff {}: {}", staff.getStaffId(), timetables.size());
-        
-        List<Timetable> timetablesForToday = new ArrayList<>();
-        
-        for (Timetable timetable : timetables) {
-            Integer tableDay = timetable.getDayOrder();
-            log.debug("Checking timetable: dayOrder={}, period={}, class={}", tableDay, timetable.getPeriodNumber(), 
-                     timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN");
-            if (tableDay != null && tableDay.equals(dayOfWeek)) {
-                timetablesForToday.add(timetable);
+
+        // 1=Monday ... 7=Sunday (Java DayOfWeek)
+        int dayOfWeek = date.getDayOfWeek().getValue();
+        log.info("Day of week: {} (1=Mon, 7=Sun)", dayOfWeek);
+
+        // --- Use timetable_template (live data) instead of legacy timetable table ---
+        List<TimetableTemplate> allTemplates =
+                timetableTemplateRepository.findByStaffId(staff.getStaffId());
+        log.info("Total templates found for staff {}: {}", staff.getStaffId(), allTemplates.size());
+
+        List<TimetableTemplate> templatesForToday = new ArrayList<>();
+        for (TimetableTemplate t : allTemplates) {
+            if (t.getStatus() == TimetableStatus.ACTIVE
+                    && t.getDayOrder() != null
+                    && t.getDayOrder().equals(dayOfWeek)) {
+                templatesForToday.add(t);
             }
         }
-        
+
         // Determine which periods need alteration
-        java.util.Set<Integer> periodsThatNeedAlteration = getPeriodsThatNeedAlteration(attendance, absentPeriods);
-        
-        log.warn("Processing {} matching timetables for date: {}, day: {}, periods: {}", 
-                 timetablesForToday.size(), date, dayOfWeek, periodsThatNeedAlteration);
-        
-        if (timetablesForToday.isEmpty()) {
-            log.error("NO TIMETABLES FOUND for staff {} on day {} (date: {}). Alteration process cannot proceed.", 
-                     staff.getStaffId(), dayOfWeek, date);
+        java.util.Set<Integer> periodsThatNeedAlteration =
+                getPeriodsThatNeedAlteration(attendance, absentPeriods);
+
+        log.warn("Processing {} matching templates for date: {}, day: {}, periods: {}",
+                 templatesForToday.size(), date, dayOfWeek, periodsThatNeedAlteration);
+
+        if (templatesForToday.isEmpty()) {
+            log.error("NO ACTIVE TIMETABLE TEMPLATES found for staff {} on dayOrder {} (date: {})." +
+                      " Ensure timetables are created via the Timetable Management page.",
+                      staff.getStaffId(), dayOfWeek, date);
             return;
         }
-        
-        // Process alteration for each relevant timetable
+
+        // processAlteration runs in REQUIRES_NEW — failure there never rolls back attendance.
         int alterationsCreated = 0;
-        for (Timetable timetable : timetablesForToday) {
-            if (periodsThatNeedAlteration.contains(timetable.getPeriodNumber())) {
-                log.info("Creating alteration for timetable: period={}, class={}", 
-                        timetable.getPeriodNumber(), 
-                        timetable.getClassRoom() != null ? timetable.getClassRoom().getClassCode() : "UNKNOWN");
-                Alteration alteration = alterationService.processAlteration(timetable, date);
+        for (TimetableTemplate template : templatesForToday) {
+            if (periodsThatNeedAlteration.contains(template.getPeriodNumber())) {
+                log.info("Creating alteration for template: period={}, class={}",
+                         template.getPeriodNumber(), template.getClassCode());
+
+                // Ensure a Timetable row exists (needed for Alteration FK)
+                Timetable timetable = getOrCreateTimetable(staff, template);
+                if (timetable == null) {
+                    log.error("Could not get/create Timetable for template id={}, skipping", template.getId());
+                    continue;
+                }
+
+                Alteration alteration = alterationService.processAlteration(
+                        timetable.getId(),
+                        date,
+                        attendance.getStatus(),
+                        attendance.getDayType(),
+                        attendance.getMeetingHours()
+                );
                 if (alteration != null) {
                     alterationsCreated++;
                 }
             }
         }
-        
-        log.warn("Alteration process completed: {} alterations created out of {} matching timetables", 
-                alterationsCreated, timetablesForToday.size());
+
+        log.warn("Alteration process complete: {} alteration(s) created from {} matching template(s)",
+                 alterationsCreated, templatesForToday.size());
+    }
+
+    /**
+     * Return the existing Timetable row for staff/dayOrder/period, or create one from the template.
+     * This bridges timetable_template (UI-managed) with the timetable table (used by AlterationService).
+     */
+    private Timetable getOrCreateTimetable(Staff staff, TimetableTemplate template) {
+        List<Timetable> existing = timetableRepository.findByStaffAndPeriod(
+                staff.getId(), template.getDayOrder(), template.getPeriodNumber());
+        if (!existing.isEmpty()) {
+            return existing.get(0);
+        }
+        try {
+            ClassRoom classRoom = classRoomRepository
+                    .findByClassCode(template.getClassCode()).orElse(null);
+            Timetable timetable = Timetable.builder()
+                    .staff(staff)
+                    .subject(template.getSubject())
+                    .classRoom(classRoom)
+                    .dayOrder(template.getDayOrder())
+                    .periodNumber(template.getPeriodNumber())
+                    .build();
+            return timetableRepository.save(timetable);
+        } catch (Exception e) {
+            log.error("Failed to create Timetable from template {} for staff {}: {}",
+                      template.getId(), staff.getStaffId(), e.getMessage());
+            return null;
+        }
     }
     
     private void cancelExistingAlterations(Staff staff, LocalDate date) {

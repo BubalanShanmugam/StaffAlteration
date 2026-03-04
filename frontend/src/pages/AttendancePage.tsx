@@ -1,10 +1,21 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, FileText, AlertCircle, Briefcase, ArrowRight, CheckCircle, Clock } from 'lucide-react'
+import { Calendar, FileText, Briefcase, ArrowRight, CheckCircle, Clock, RefreshCw, History } from 'lucide-react'
 import { Layout } from '../components/Layout'
 import { Button, Card, Alert } from '../components/common'
 import { attendanceAPI, alterationAPI } from '../api'
 import { useAuthStore } from '../store/authStore'
+
+interface AttendanceRecord {
+  id: number
+  staffId: string
+  attendanceDate: string
+  status: string
+  dayType: string
+  remarks?: string
+  createdAt: string
+  updatedAt: string
+}
 
 export const AttendancePage: React.FC = () => {
   const user = useAuthStore((state) => state.user)
@@ -20,6 +31,11 @@ export const AttendancePage: React.FC = () => {
   const [selectedMeetingHours, setSelectedMeetingHours] = useState<Set<number>>(new Set())
   const [selectedPeriods, setSelectedPeriods] = useState<Set<number>>(new Set())
   const [usePeriodWiseMarking, setUsePeriodWiseMarking] = useState(false)
+
+  // DB state
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([])
+  const [dbLoading, setDbLoading] = useState(false)
+  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
   
   const [formData, setFormData] = useState({
     status: 'LEAVE' as 'LEAVE' | 'ONDUTY' | 'MEETING',
@@ -28,6 +44,32 @@ export const AttendancePage: React.FC = () => {
     endDate: new Date().toISOString().split('T')[0],
     remarks: '',
   })
+
+  // Load attendance records from database
+  const loadAttendanceFromDB = useCallback(async () => {
+    const staffId = user?.staffId || user?.username
+    if (!staffId) return
+    setDbLoading(true)
+    try {
+      const res = await attendanceAPI.getStaffAttendance(staffId)
+      const records: AttendanceRecord[] = (res.data.data || []).sort(
+        (a: AttendanceRecord, b: AttendanceRecord) =>
+          new Date(b.attendanceDate).getTime() - new Date(a.attendanceDate).getTime()
+      )
+      setAttendanceRecords(records)
+      const today = new Date().toISOString().split('T')[0]
+      const todayRec = records.find((r) => r.attendanceDate === today) || null
+      setTodayRecord(todayRec)
+    } catch (err) {
+      console.error('Failed to load attendance from DB:', err)
+    } finally {
+      setDbLoading(false)
+    }
+  }, [user?.staffId])
+
+  useEffect(() => {
+    loadAttendanceFromDB()
+  }, [loadAttendanceFromDB])
 
   // Period numbers for selection (1-6)
   const periods = [1, 2, 3, 4, 5, 6]
@@ -109,7 +151,7 @@ export const AttendancePage: React.FC = () => {
       // Mark attendance for each date
       for (const date of dates) {
         const payload: any = {
-          staffId: user.staffId,
+          staffId: user.staffId || user.username,  // staffId == username in seeded data
           status: formData.status,
           attendanceDate: date,
           remarks: formData.remarks || notes,
@@ -153,6 +195,9 @@ export const AttendancePage: React.FC = () => {
 
       setSuccess(`✅ Attendance marked successfully for ${dates.length} day(s)!`)
       
+      // Reload attendance records from DB immediately to reflect the update
+      await loadAttendanceFromDB()
+
       // If marked as LEAVE, ONDUTY, or MEETING, fetch and display created alterations
       if (['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status)) {
         try {
@@ -194,14 +239,79 @@ export const AttendancePage: React.FC = () => {
     }
   }
 
+  const getStatusBadgeColor = (status: string) => {
+    const map: Record<string, string> = {
+      PRESENT:            'bg-green-100 text-green-800',
+      LEAVE:              'bg-blue-100 text-blue-800',
+      ABSENT:             'bg-red-100 text-red-800',
+      ONDUTY:             'bg-orange-100 text-orange-800',
+      MEETING:            'bg-purple-100 text-purple-800',
+      PERIOD_WISE_ABSENT: 'bg-yellow-100 text-yellow-800',
+    }
+    return map[status] || 'bg-slate-100 text-slate-700'
+  }
+
+  const formatDayType = (dayType: string) => {
+    const map: Record<string, string> = {
+      FULL_DAY:        'Full Day',
+      MORNING_ONLY:    'Morning (9AM–1PM)',
+      AFTERNOON_ONLY:  'Afternoon (1PM–5PM)',
+    }
+    return map[dayType] || dayType
+  }
+
   return (
     <Layout>
       <div className="space-y-6 animate-fadeIn">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Mark Attendance</h1>
-          <p className="text-slate-600 mt-1">Record your daily attendance and manage meeting schedules</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Mark Attendance</h1>
+            <p className="text-slate-600 mt-1">Record your daily attendance and manage meeting schedules</p>
+          </div>
+          <button
+            onClick={loadAttendanceFromDB}
+            disabled={dbLoading}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              dbLoading ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            <RefreshCw className={`w-4 h-4 ${dbLoading ? 'animate-spin' : ''}`} />
+            Refresh from DB
+          </button>
         </div>
+
+        {/* TODAY'S STATUS BANNER — shows what's currently in the database */}
+        <Card className={`p-5 border-2 ${todayRecord ? 'border-green-400 bg-green-50' : 'border-slate-200 bg-slate-50'}`}>
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-full ${todayRecord ? 'bg-green-100' : 'bg-slate-100'}`}>
+              {todayRecord ? (
+                <CheckCircle className="w-6 h-6 text-green-600" />
+              ) : (
+                <Clock className="w-6 h-6 text-slate-500" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-slate-900">
+                Today ({new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })})
+              </p>
+              {todayRecord ? (
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                  <span className={`px-3 py-1 rounded-full text-sm font-semibold ${getStatusBadgeColor(todayRecord.status)}`}>
+                    {todayRecord.status}
+                  </span>
+                  <span className="text-sm text-slate-600">{formatDayType(todayRecord.dayType)}</span>
+                  {todayRecord.remarks && (
+                    <span className="text-sm text-slate-500 italic">"{todayRecord.remarks}"</span>
+                  )}
+                  <span className="text-xs text-green-700 font-medium">✓ Saved in DB (ID: {todayRecord.id})</span>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500 mt-1">No attendance marked yet — use the form below</p>
+              )}
+            </div>
+          </div>
+        </Card>
 
         {/* Alerts */}
         {error && (
@@ -469,6 +579,70 @@ export const AttendancePage: React.FC = () => {
             </Button>
           </div>
         </form>
+
+        {/* ── ATTENDANCE HISTORY FROM DATABASE ── */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-slate-600" />
+              <h3 className="font-semibold text-slate-900">Attendance History (from DB)</h3>
+            </div>
+            {dbLoading && <RefreshCw className="w-4 h-4 animate-spin text-slate-500" />}
+          </div>
+
+          {attendanceRecords.length === 0 ? (
+            <div className="text-center py-8 text-slate-500">
+              {dbLoading ? 'Loading from database...' : 'No attendance records found in database.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    <th className="text-left py-2 px-3 font-semibold text-slate-700">Date</th>
+                    <th className="text-left py-2 px-3 font-semibold text-slate-700">Status</th>
+                    <th className="text-left py-2 px-3 font-semibold text-slate-700">Duration</th>
+                    <th className="text-left py-2 px-3 font-semibold text-slate-700">Remarks</th>
+                    <th className="text-left py-2 px-3 font-semibold text-slate-700 text-xs text-slate-500">DB ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendanceRecords.slice(0, 20).map((rec) => {
+                    const isToday = rec.attendanceDate === new Date().toISOString().split('T')[0]
+                    return (
+                      <tr
+                        key={rec.id}
+                        className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${isToday ? 'bg-green-50' : ''}`}
+                      >
+                        <td className="py-2 px-3 font-medium text-slate-900">
+                          {new Date(rec.attendanceDate).toLocaleDateString('en-US', {
+                            weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+                          })}
+                          {isToday && (
+                            <span className="ml-2 text-xs bg-green-600 text-white px-1.5 py-0.5 rounded">TODAY</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${getStatusBadgeColor(rec.status)}`}>
+                            {rec.status}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-slate-600">{formatDayType(rec.dayType)}</td>
+                        <td className="py-2 px-3 text-slate-500 max-w-xs truncate">{rec.remarks || '—'}</td>
+                        <td className="py-2 px-3 text-xs text-slate-400">#{rec.id}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {attendanceRecords.length > 20 && (
+                <p className="text-sm text-slate-500 mt-2 text-center">
+                  Showing latest 20 of {attendanceRecords.length} records
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
       </div>
     </Layout>
   )
