@@ -202,62 +202,100 @@ public class AlterationService {
     }
     
     /**
-     * Find substitute staff — simple round-robin/least-load selection.
+     * Find the best available substitute staff.
      *
-     * Rules (no priority-based filtering that can return null):
-     * 1. Exclude the absent staff themselves.
-     * 2. Exclude staff who are already assigned as a substitute for the SAME period on the SAME date.
-     * 3. Among the remaining candidates, prefer same-department staff.
-     * 4. Within that pool, pick whoever has the fewest total alteration assignments on that date.
-     * 5. If no same-department candidate exists, use any active staff (least-loaded).
-     * 6. If everyone is already allocated for that period, fall back to the least-loaded candidate.
-     *
-     * Deliberately ignores attendance status so a substitute is ALWAYS found.
+     * Strategy (always returns a non-null result if any active staff exists):
+     * 1. Get all ACTIVE staff, exclude the absent staff.
+     * 2. Pre-fetch all existing alterations for this date ONCE (avoids per-candidate DB round-trips
+     *    and avoids lazy-load NPEs by reading IDs while the session is open).
+     * 3. Build in-memory maps: who is already substituting which period.
+     * 4. Prefer staff NOT already assigned to the same period (avoid double-booking).
+     * 5. Within that pool, prefer same-department staff.
+     * 6. Among same-dept candidates, pick the one with the fewest substitute assignments today.
+     * 7. Absolute last resort: first active staff member.
      */
     private Staff findSubstitute(Timetable timetable, LocalDate alterationDate) {
-        List<Staff> allStaff = staffRepository.findByStatus(Staff.StaffStatus.ACTIVE);
-        allStaff.removeIf(s -> s.getId().equals(timetable.getStaff().getId()));
-
+        // --- 1. Candidate pool: all active staff except the absent one ---
+        List<Staff> allStaff = new ArrayList<>(staffRepository.findByStatus(Staff.StaffStatus.ACTIVE));
+        Long absentId = (timetable.getStaff() != null) ? timetable.getStaff().getId() : null;
+        if (absentId != null) {
+            allStaff.removeIf(s -> s.getId().equals(absentId));
+        }
         if (allStaff.isEmpty()) {
-            log.warn("No active staff available for substitution");
+            log.warn("findSubstitute: no active staff other than the absent one");
             return null;
         }
 
-        // Staff already assigned as substitute for the same period+date → de-prioritise (don't exclude entirely)
-        List<Staff> notYetAllocated = allStaff.stream()
-                .filter(s -> !isAlreadyAllocatedForPeriod(s, timetable, alterationDate))
+        // --- 2. Pre-fetch existing alterations for this date (ONE query) ---
+        List<Alteration> todayAlterations = alterationRepository.findByAlterationDate(alterationDate);
+
+        // --- 3. Build in-memory structures (read .getId() while session is still open) ---
+        // substituteLoadMap : staffId → number of periods they're substituting today
+        Map<Long, Long> substituteLoadMap = new HashMap<>();
+        // allocatedKeys : "staffId:periodNumber" pairs already taken
+        java.util.Set<String> allocatedKeys = new java.util.HashSet<>();
+
+        for (Alteration a : todayAlterations) {
+            try {
+                if (a.getSubstituteStaff() == null) continue;
+                Long subId = a.getSubstituteStaff().getId(); // ID is always safe even with proxy
+                substituteLoadMap.merge(subId, 1L, Long::sum);
+
+                Integer period = (a.getTimetable() != null) ? a.getTimetable().getPeriodNumber() : null;
+                if (period != null) {
+                    allocatedKeys.add(subId + ":" + period);
+                }
+            } catch (Exception e) {
+                log.debug("Skipping alteration during substitute search: {}", e.getMessage());
+            }
+        }
+
+        // --- 4. Prefer staff not double-booked for this exact period ---
+        int targetPeriod = (timetable.getPeriodNumber() != null) ? timetable.getPeriodNumber() : 0;
+        List<Staff> notDoubleBooked = allStaff.stream()
+                .filter(s -> !allocatedKeys.contains(s.getId() + ":" + targetPeriod))
                 .collect(Collectors.toList());
+        List<Staff> candidates = notDoubleBooked.isEmpty() ? allStaff : notDoubleBooked;
+        log.info("findSubstitute: {} total candidates, {} not double-booked for period {}",
+                 allStaff.size(), notDoubleBooked.size(), targetPeriod);
 
-        // Use full list as fallback when everyone is already allocated for this period
-        List<Staff> candidates = notYetAllocated.isEmpty() ? allStaff : notYetAllocated;
+        // --- 5. Prefer same-department staff ---
+        Long deptId = null;
+        try {
+            if (timetable.getStaff() != null && timetable.getStaff().getDepartment() != null) {
+                deptId = timetable.getStaff().getDepartment().getId();
+            }
+        } catch (Exception e) {
+            log.debug("Could not read department from timetable staff: {}", e.getMessage());
+        }
+        final Long finalDeptId = deptId;
+        if (finalDeptId != null) {
+            List<Staff> sameDept = candidates.stream()
+                    .filter(s -> s.getDepartment() != null && finalDeptId.equals(s.getDepartment().getId()))
+                    .collect(Collectors.toList());
+            if (!sameDept.isEmpty()) {
+                log.info("findSubstitute: using {} same-dept candidates (dept={})", sameDept.size(), finalDeptId);
+                candidates = sameDept;
+            } else {
+                log.info("findSubstitute: no same-dept candidates, using full pool of {}", candidates.size());
+            }
+        }
 
-        // Prefer same-department staff
-        List<Staff> sameDept = candidates.stream()
-                .filter(s -> s.getDepartment() != null &&
-                             s.getDepartment().getId().equals(timetable.getStaff().getDepartment() != null
-                                     ? timetable.getStaff().getDepartment().getId() : -1L))
-                .collect(Collectors.toList());
+        // --- 6. Pick least-loaded ---
+        final Map<Long, Long> loadMap = substituteLoadMap;
+        Staff chosen = candidates.stream()
+                .min(Comparator.comparingLong(s -> loadMap.getOrDefault(s.getId(), 0L)))
+                .orElse(null);
 
-        List<Staff> pool = sameDept.isEmpty() ? candidates : sameDept;
-
-        // Pick least-loaded (fewest alteration rows on this date as substitute)
-        return pool.stream()
-                .min(Comparator.comparingLong(s ->
-                        alterationRepository.findByAlterationDate(alterationDate).stream()
-                                .filter(a -> a.getSubstituteStaff() != null &&
-                                             a.getSubstituteStaff().getId().equals(s.getId()))
-                                .count()))
-                .orElseGet(() -> allStaff.get(0)); // absolute last-resort fallback
-    }
-    
-    /**
-     * Check if staff is already allocated for this specific period on this date
-     */
-    private boolean isAlreadyAllocatedForPeriod(Staff staff, Timetable timetable, LocalDate alterationDate) {
-        List<Alteration> alterations = alterationRepository.findByAlterationDate(alterationDate);
-        return alterations.stream()
-                .anyMatch(a -> a.getSubstituteStaff().getId().equals(staff.getId()) &&
-                             a.getTimetable().getPeriodNumber().equals(timetable.getPeriodNumber()));
+        // --- 7. Absolute fallback ---
+        if (chosen == null) {
+            chosen = allStaff.get(0);
+            log.warn("findSubstitute: using absolute fallback staff {}", chosen.getStaffId());
+        } else {
+            log.info("findSubstitute: chose substitute={} (load={}) for period {}",
+                     chosen.getStaffId(), loadMap.getOrDefault(chosen.getId(), 0L), targetPeriod);
+        }
+        return chosen;
     }
     
     /**
