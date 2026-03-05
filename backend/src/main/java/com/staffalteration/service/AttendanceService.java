@@ -190,9 +190,8 @@ public class AttendanceService {
                  templatesForToday.size(), date, dayOfWeek, periodsThatNeedAlteration);
 
         if (templatesForToday.isEmpty()) {
-            log.error("NO ACTIVE TIMETABLE TEMPLATES found for staff {} on dayOrder {} (date: {})." +
-                      " Ensure timetables are created via the Timetable Management page.",
-                      staff.getStaffId(), dayOfWeek, date);
+            log.info("Staff {} has no active teaching hours on dayOrder {} (date: {}). No alteration needed.",
+                     staff.getStaffId(), dayOfWeek, date);
             return;
         }
 

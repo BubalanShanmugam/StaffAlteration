@@ -410,21 +410,12 @@ export const AlterationDashboardPage: React.FC = () => {
             <div className="inline-block w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
             <p className="mt-4 text-slate-600">Loading alterations...</p>
           </Card>
-        ) : alterations.length === 0 ? (
-          <Card className="p-12 text-center">
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <p className="text-slate-600 font-medium">
-              {activeTab === 'as-original'
-                ? 'No absences recorded'
-                : 'No substitute assignments'}
-            </p>
-          </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Calendar */}
             <div className="lg:col-span-1">
               <AlterationCalendar
-                alterations={filteredAlterations}
+                alterations={alterations}
                 dateInfoByType={dateInfoByType}
                 onDateSelect={setSelectedDate}
                 selectedDate={selectedDate}
