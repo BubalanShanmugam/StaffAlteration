@@ -90,6 +90,12 @@ public class Alteration {
         AN,  // Morning Only
         AF,  // Afternoon Only
         ONDUTY,  // On Duty
-        PERIOD_WISE_ABSENT  // Period Specific Absence
+        PERIOD_WISE_ABSENT,  // Generic period-wise (legacy)
+        PERIOD_1,  // Period 1 (9:00-10:00)
+        PERIOD_2,  // Period 2 (10:00-11:00)
+        PERIOD_3,  // Period 3 (11:00-12:00)
+        PERIOD_4,  // Period 4 (12:00-1:00)
+        PERIOD_5,  // Period 5 (1:00-2:00)
+        PERIOD_6   // Period 6 (2:00-3:00)
     }
 }

@@ -51,10 +51,12 @@ export interface CreateTimetableRequest {
 
 export interface AttendanceMarkRequest {
   staffId: string
-  status: 'PRESENT' | 'ABSENT' | 'LEAVE'
+  status: 'PRESENT' | 'ABSENT' | 'LEAVE' | 'ONDUTY' | 'MEETING' | 'PERIOD_WISE_ABSENT'
   dayType?: 'FULL_DAY' | 'MORNING_ONLY' | 'AFTERNOON_ONLY'
   attendanceDate: string
   attendanceDates?: string[]
+  selectedPeriods?: number[]
+  meetingHours?: number[]
   remarks?: string
 }
 
@@ -80,7 +82,7 @@ export interface AlterationDTO {
   dayOrder: number
   periodNumber: number
   alterationDate: string
-  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT' | 'PERIOD_1' | 'PERIOD_2' | 'PERIOD_3' | 'PERIOD_4' | 'PERIOD_5' | 'PERIOD_6'
   status: string
   remarks?: string
 }

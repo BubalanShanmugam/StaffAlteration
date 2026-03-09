@@ -24,7 +24,7 @@ interface StaffAlteration {
   dayOrder: number
   periodNumber: number
   alterationDate: string
-  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT' | 'PERIOD_1' | 'PERIOD_2' | 'PERIOD_3' | 'PERIOD_4' | 'PERIOD_5' | 'PERIOD_6'
   status: string
   remarks?: string
   departmentId: number
@@ -168,6 +168,12 @@ export const HodDashboardPage: React.FC = () => {
       AF: 'Half Day Afternoon (1PM - 5PM)',
       ONDUTY: 'On Duty - Full Day',
       PERIOD_WISE_ABSENT: `Period ${alteration.periodNumber} Absent`,
+      PERIOD_1: 'Period 1 (9:00-10:00)',
+      PERIOD_2: 'Period 2 (10:00-11:00)',
+      PERIOD_3: 'Period 3 (11:00-12:00)',
+      PERIOD_4: 'Period 4 (12:00-1:00)',
+      PERIOD_5: 'Period 5 (1:00-2:00)',
+      PERIOD_6: 'Period 6 (2:00-3:00)',
     }
     return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber}`
   }

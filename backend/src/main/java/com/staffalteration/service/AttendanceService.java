@@ -209,12 +209,27 @@ public class AttendanceService {
                     continue;
                 }
 
+                // Use absentPeriods (plain Java Set straight from the DTO) when available —
+                // it is the ground-truth set of selected periods and has no Hibernate
+                // PersistentSet / LazyInitializationException risk.
+                // Fall back to attendance.getMeetingHours() only for full/half-day MEETING
+                // where no selectedPeriods were sent.
+                Set<Integer> hoursForAlteration;
+                if (absentPeriods != null && !absentPeriods.isEmpty()) {
+                    hoursForAlteration = new java.util.HashSet<>(absentPeriods);
+                } else {
+                    hoursForAlteration = attendance.getMeetingHours() != null
+                            ? new java.util.HashSet<>(attendance.getMeetingHours())
+                            : new java.util.HashSet<>();
+                }
+                log.info("Calling processAlteration period={}, status={}, hoursForAlteration={}",
+                        template.getPeriodNumber(), attendance.getStatus(), hoursForAlteration);
                 Alteration alteration = alterationService.processAlteration(
                         timetable.getId(),
                         date,
                         attendance.getStatus(),
                         attendance.getDayType(),
-                        attendance.getMeetingHours()
+                        hoursForAlteration
                 );
                 if (alteration != null) {
                     alterationsCreated++;
@@ -311,9 +326,19 @@ public class AttendanceService {
                 periods.add(6);
             }
         } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.MEETING)) {
-            // For MEETING, alteration needed only for specified meeting hours
+            // For MEETING: use specific meeting hours if selected (period-wise),
+            // otherwise fall back to dayType-based periods so all scheduled classes
+            // during the meeting are substituted.
             if (attendance.getMeetingHours() != null && !attendance.getMeetingHours().isEmpty()) {
                 periods.addAll(attendance.getMeetingHours());
+            } else {
+                if (attendance.getDayType().equals(Attendance.DayType.FULL_DAY)) {
+                    for (int i = 1; i <= 6; i++) periods.add(i);
+                } else if (attendance.getDayType().equals(Attendance.DayType.MORNING_ONLY)) {
+                    periods.add(1); periods.add(2); periods.add(3); periods.add(4);
+                } else if (attendance.getDayType().equals(Attendance.DayType.AFTERNOON_ONLY)) {
+                    periods.add(5); periods.add(6);
+                }
             }
         } else if (attendance.getStatus().equals(Attendance.AttendanceStatus.ONDUTY)) {
             // For ONDUTY, alteration needed based on dayType
@@ -394,6 +419,10 @@ public class AttendanceService {
                 .remarks(attendance.getRemarks())
                 .createdAt(attendance.getCreatedAt())
                 .updatedAt(attendance.getUpdatedAt())
+                .selectedPeriods(
+                        attendance.getMeetingHours() != null && !attendance.getMeetingHours().isEmpty()
+                                ? new java.util.HashSet<>(attendance.getMeetingHours())
+                                : null)
                 .build();
     }
     

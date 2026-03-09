@@ -85,12 +85,17 @@ public class AlterationService {
                 return null;
             }
 
-            // Duplicate guard: skip if an active alteration already exists for this slot+date
+            // Duplicate guard: if an active alteration already exists for this slot+date,
+            // cancel it in this REQUIRES_NEW transaction so re-marking (e.g. FN → PERIOD_1)
+            // always produces a fresh record with the updated absence type.
+            // (cancelExistingAlterations runs in the outer tx which hasn't committed yet —
+            //  this inner REQUIRES_NEW tx can't see those uncommitted changes, so we handle it here.)
             List<Alteration> existing = alterationRepository.findByTimetableAndDate(timetableId, alterationDate);
             if (!existing.isEmpty() && existing.get(0).getStatus() != Alteration.AlterationStatus.CANCELLED) {
-                log.info("Active alteration id={} already exists for timetable {} on {}, skipping",
-                         existing.get(0).getId(), timetableId, alterationDate);
-                return existing.get(0);
+                log.info("Cancelling stale alteration id={} (seen as {} in this tx) before re-creating with updated absence type",
+                         existing.get(0).getId(), existing.get(0).getStatus());
+                existing.get(0).setStatus(Alteration.AlterationStatus.CANCELLED);
+                alterationRepository.save(existing.get(0));
             }
 
             Staff originalStaff = timetable.getStaff();
@@ -100,23 +105,37 @@ public class AlterationService {
             Integer periodNumber = timetable.getPeriodNumber();
 
             if (attendanceStatus.equals(Attendance.AttendanceStatus.MEETING)) {
-                if (meetingHours != null && !meetingHours.isEmpty() && meetingHours.contains(timetable.getPeriodNumber())) {
-                    absenceType = Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+                if (meetingHours != null && !meetingHours.isEmpty()) {
+                    // Period-wise meeting: only substitute periods explicitly selected
+                    if (meetingHours.contains(timetable.getPeriodNumber())) {
+                        absenceType = periodToAbsenceType(timetable.getPeriodNumber());
+                    } else {
+                        log.debug("Period {} not in meeting hours {}, skipping", timetable.getPeriodNumber(), meetingHours);
+                        return null;
+                    }
                 } else {
-                    log.debug("Period {} not in meeting hours {}, skipping", timetable.getPeriodNumber(), meetingHours);
-                    return null;
+                    // Full/half-day meeting: absenceType from dayType (same as LEAVE/ABSENT)
+                    Attendance.DayType dayType = attendanceDayType != null ? attendanceDayType : Attendance.DayType.FULL_DAY;
+                    if (dayType.equals(Attendance.DayType.MORNING_ONLY))       absenceType = Alteration.AbsenceType.AN;
+                    else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) absenceType = Alteration.AbsenceType.AF;
+                    else                                                         absenceType = Alteration.AbsenceType.FN;
                 }
             } else if (attendanceStatus.equals(Attendance.AttendanceStatus.PERIOD_WISE_ABSENT)) {
-                absenceType = Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+                absenceType = periodToAbsenceType(timetable.getPeriodNumber());
             } else {
                 Attendance.DayType dayType = attendanceDayType != null ? attendanceDayType : Attendance.DayType.FULL_DAY;
                 if (attendanceStatus.equals(Attendance.AttendanceStatus.LEAVE) ||
                     attendanceStatus.equals(Attendance.AttendanceStatus.ABSENT)) {
-                    if (dayType.equals(Attendance.DayType.MORNING_ONLY))    absenceType = Alteration.AbsenceType.AN;
+                    if (meetingHours != null && !meetingHours.isEmpty()) {
+                        // Period-wise selection: store the specific period (e.g. PERIOD_1, PERIOD_2)
+                        absenceType = periodToAbsenceType(timetable.getPeriodNumber());
+                    } else if (dayType.equals(Attendance.DayType.MORNING_ONLY))    absenceType = Alteration.AbsenceType.AN;
                     else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) absenceType = Alteration.AbsenceType.AF;
                     else absenceType = Alteration.AbsenceType.FN;
                 } else if (attendanceStatus.equals(Attendance.AttendanceStatus.ONDUTY)) {
-                    if (dayType.equals(Attendance.DayType.MORNING_ONLY))    absenceType = Alteration.AbsenceType.AN;
+                    if (meetingHours != null && !meetingHours.isEmpty()) {
+                        absenceType = periodToAbsenceType(timetable.getPeriodNumber());
+                    } else if (dayType.equals(Attendance.DayType.MORNING_ONLY))    absenceType = Alteration.AbsenceType.AN;
                     else if (dayType.equals(Attendance.DayType.AFTERNOON_ONLY)) absenceType = Alteration.AbsenceType.AF;
                     else absenceType = Alteration.AbsenceType.ONDUTY;
                 }
@@ -214,6 +233,19 @@ public class AlterationService {
      * 6. Among same-dept candidates, pick the one with the fewest substitute assignments today.
      * 7. Absolute last resort: first active staff member.
      */
+    private Alteration.AbsenceType periodToAbsenceType(Integer periodNumber) {
+        if (periodNumber == null) return Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+        switch (periodNumber) {
+            case 1: return Alteration.AbsenceType.PERIOD_1;
+            case 2: return Alteration.AbsenceType.PERIOD_2;
+            case 3: return Alteration.AbsenceType.PERIOD_3;
+            case 4: return Alteration.AbsenceType.PERIOD_4;
+            case 5: return Alteration.AbsenceType.PERIOD_5;
+            case 6: return Alteration.AbsenceType.PERIOD_6;
+            default: return Alteration.AbsenceType.PERIOD_WISE_ABSENT;
+        }
+    }
+
     private Staff findSubstitute(Timetable timetable, LocalDate alterationDate) {
         // --- 1. Candidate pool: all active staff except the absent one ---
         List<Staff> allStaff = new ArrayList<>(staffRepository.findByStatus(Staff.StaffStatus.ACTIVE));

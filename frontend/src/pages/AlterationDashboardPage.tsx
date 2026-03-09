@@ -18,7 +18,7 @@ interface Alteration {
   dayOrder: number
   periodNumber: number
   alterationDate: string
-  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT' | 'PERIOD_1' | 'PERIOD_2' | 'PERIOD_3' | 'PERIOD_4' | 'PERIOD_5' | 'PERIOD_6'
   status: string
   remarks?: string
 }
@@ -260,7 +260,13 @@ export const AlterationDashboardPage: React.FC = () => {
       'AN': 'Half Day Morning Leave (9AM - 1PM)',
       'AF': 'Half Day Afternoon Leave (1PM - 5PM)',
       'ONDUTY': 'On Duty - Full Day',
-      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent`
+      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent`,
+      'PERIOD_1': 'Period 1 (9:00-10:00)',
+      'PERIOD_2': 'Period 2 (10:00-11:00)',
+      'PERIOD_3': 'Period 3 (11:00-12:00)',
+      'PERIOD_4': 'Period 4 (12:00-1:00)',
+      'PERIOD_5': 'Period 5 (1:00-2:00)',
+      'PERIOD_6': 'Period 6 (2:00-3:00)',
     }
     
     return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber}`
@@ -290,6 +296,12 @@ export const AlterationDashboardPage: React.FC = () => {
       ONDUTY: 'On Duty',
       MEETING: 'Meeting',
       PERIOD_WISE_ABSENT: 'Period-wise Absent',
+      PERIOD_1: 'Period 1 (9:00-10:00)',
+      PERIOD_2: 'Period 2 (10:00-11:00)',
+      PERIOD_3: 'Period 3 (11:00-12:00)',
+      PERIOD_4: 'Period 4 (12:00-1:00)',
+      PERIOD_5: 'Period 5 (1:00-2:00)',
+      PERIOD_6: 'Period 6 (2:00-3:00)',
       PRESENT: 'Present',
     }
     const statusColor: Record<string, string> = {
@@ -298,6 +310,12 @@ export const AlterationDashboardPage: React.FC = () => {
       ONDUTY:             'bg-purple-100 text-purple-800 border border-purple-300',
       MEETING:            'bg-teal-100 text-teal-800 border border-teal-300',
       PERIOD_WISE_ABSENT: 'bg-orange-100 text-orange-800 border border-orange-300',
+      PERIOD_1: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_2: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_3: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_4: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_5: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_6: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
       PRESENT:            'bg-green-100 text-green-800 border border-green-300',
     }
     return {
@@ -510,6 +528,7 @@ export const AlterationDashboardPage: React.FC = () => {
                                       alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
                                       alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
                                       alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                                      alteration.absenceType.startsWith('PERIOD_') ? 'bg-yellow-100 text-yellow-700' :
                                       'bg-yellow-100 text-yellow-700'
                                     }`}>
                                       {getPeriodDisplay(alteration)}
@@ -518,8 +537,7 @@ export const AlterationDashboardPage: React.FC = () => {
                                 </div>
                                 <div>
                                   <p className="text-slate-500 font-medium">
-                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}
-                                  </p>
+                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}</p>
                                   <p className="text-slate-900">
                                     {activeTab === 'as-original'
                                       ? alteration.substituteStaffName
@@ -679,6 +697,7 @@ export const AlterationDashboardPage: React.FC = () => {
                                     alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
                                     alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
                                     alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                                    alteration.absenceType.startsWith('PERIOD_') ? 'bg-yellow-100 text-yellow-700' :
                                     'bg-yellow-100 text-yellow-700'
                                   }`}>
                                     {getPeriodDisplay(alteration)}

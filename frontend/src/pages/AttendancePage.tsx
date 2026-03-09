@@ -15,6 +15,7 @@ interface AttendanceRecord {
   remarks?: string
   createdAt: string
   updatedAt: string
+  selectedPeriods?: number[] // Period-wise selected periods (e.g., [1, 2] → PERIOD_1, PERIOD_2 in absence_type)
 }
 
 export const AttendancePage: React.FC = () => {
@@ -260,6 +261,15 @@ export const AttendancePage: React.FC = () => {
     return map[dayType] || dayType
   }
 
+  // Shows period-wise labels when selectedPeriods are present, otherwise falls back to dayType
+  const formatDuration = (rec: AttendanceRecord) => {
+    if (rec.selectedPeriods && rec.selectedPeriods.length > 0) {
+      const sorted = [...rec.selectedPeriods].sort((a, b) => a - b)
+      return sorted.map((p) => periodLabels[p] || `Period ${p}`).join(', ')
+    }
+    return formatDayType(rec.dayType)
+  }
+
   return (
     <Layout>
       <div className="space-y-6 animate-fadeIn">
@@ -391,74 +401,77 @@ export const AttendancePage: React.FC = () => {
             </div>
           </Card>
 
-          {/* Period-Wise Marking Checkbox */}
+          {/* Absence Duration — combined duration buttons + period-wise selection */}
           {['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status) && (
-            <Card className="p-4 border-l-4 border-slate-400">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={usePeriodWiseMarking}
-                  onChange={(e) => {
-                    setUsePeriodWiseMarking(e.target.checked)
-                    setSelectedPeriods(new Set())
-                  }}
-                  className="w-5 h-5 rounded"
-                />
-                <div>
-                  <p className="font-medium text-slate-900">Mark specific periods</p>
-                  <p className="text-sm text-slate-600">Select individual periods instead of full/half day options</p>
+            <Card className="p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Absence Duration</h3>
+
+              {/* Default: Full Day / Morning / Afternoon buttons */}
+              {!usePeriodWiseMarking && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+                  {[
+                    { value: 'FULL_DAY' as const, label: 'Full Day' },
+                    { value: 'MORNING_ONLY' as const, label: 'Morning (9 AM - 1 PM)' },
+                    { value: 'AFTERNOON_ONLY' as const, label: 'Afternoon (1 PM - 5 PM)' },
+                  ].map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, dayType: value })}
+                      className={`border-2 rounded-lg p-3 text-center transition-all ${
+                        formData.dayType === value
+                          ? 'border-blue-500 bg-blue-50 shadow-md'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <p className="font-medium text-slate-900">{label}</p>
+                    </button>
+                  ))}
                 </div>
-              </label>
-            </Card>
-          )}
+              )}
 
-          {/* Duration Selection */}
-          {!usePeriodWiseMarking && ['LEAVE', 'ONDUTY', 'MEETING'].includes(formData.status) && (
-            <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-slate-900 mb-4">Duration</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                  { value: 'FULL_DAY' as const, label: 'Full Day' },
-                  { value: 'MORNING_ONLY' as const, label: 'Morning (9 AM - 1 PM)' },
-                  { value: 'AFTERNOON_ONLY' as const, label: 'Afternoon (1 PM - 5 PM)' },
-                ].map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, dayType: value })}
-                    className={`border-2 rounded-lg p-3 text-center transition-all ${
-                      formData.dayType === value
-                        ? 'border-blue-500 bg-blue-50 shadow-md'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="font-medium text-slate-900">{label}</p>
-                  </button>
-                ))}
-              </div>
-            </Card>
-          )}
+              {/* Period-wise: individual period checkboxes */}
+              {usePeriodWiseMarking && (
+                <div className="mb-5">
+                  <p className="text-sm text-slate-600 mb-3">
+                    Select the specific periods for this {formData.status.toLowerCase()}
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {periods.map((period) => (
+                      <label
+                        key={period}
+                        className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-slate-200 hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPeriods.has(period)}
+                          onChange={() => togglePeriod(period)}
+                          className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-sm font-medium text-slate-900">{periodLabels[period]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {/* Period Selection (if period-wise marking enabled) */}
-          {usePeriodWiseMarking && (
-            <Card className="p-6 border-l-4 border-slate-500">
-              <div className="flex items-center gap-2 mb-4">
-                <Clock className="w-5 h-5 text-slate-600" />
-                <h3 className="font-semibold text-slate-900">Select Periods</h3>
-              </div>
-              <p className="text-sm text-slate-600 mb-4">Choose the specific periods for this {formData.status.toLowerCase()}</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {periods.map((period) => (
-                  <label key={period} className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-slate-200 hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      checked={selectedPeriods.has(period)}
-                      onChange={() => togglePeriod(period)}
-                      className="w-4 h-4 text-slate-600 rounded focus:ring-2 focus:ring-slate-500"
-                    />
-                    <span className="text-sm font-medium text-slate-900">{periodLabels[period]}</span>
-                  </label>
-                ))}
+              {/* Toggle: Period wise selection checkbox */}
+              <div className="border-t border-slate-100 pt-4">
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={usePeriodWiseMarking}
+                    onChange={(e) => {
+                      setUsePeriodWiseMarking(e.target.checked)
+                      setSelectedPeriods(new Set())
+                    }}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <div>
+                    <p className="font-medium text-slate-900 text-sm">Period wise selection</p>
+                    <p className="text-xs text-slate-500">Choose individual periods instead of full / half day</p>
+                  </div>
+                </label>
               </div>
             </Card>
           )}
@@ -627,7 +640,7 @@ export const AttendancePage: React.FC = () => {
                             {rec.status}
                           </span>
                         </td>
-                        <td className="py-2 px-3 text-slate-600">{formatDayType(rec.dayType)}</td>
+                        <td className="py-2 px-3 text-slate-600">{formatDuration(rec)}</td>
                         <td className="py-2 px-3 text-slate-500 max-w-xs truncate">{rec.remarks || '—'}</td>
                         <td className="py-2 px-3 text-xs text-slate-400">#{rec.id}</td>
                       </tr>
