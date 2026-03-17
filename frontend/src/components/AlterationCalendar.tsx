@@ -4,8 +4,48 @@ import { AlterationDTO } from '../api'
 
 interface DateInfo {
   date: string
-  type: 'absence' | 'substitution'
+  type: 'absent-full' | 'absent-morning' | 'absent-afternoon' | 'onduty' | 'meeting' | 'substitution'
   count: number
+  attendanceStatus?: string
+  dayType?: string
+}
+
+// Return Tailwind classes for the calendar cell based on type
+const getDateCellClass = (type: DateInfo['type'] | undefined, isSelected: boolean): string => {
+  if (isSelected) return 'bg-blue-600 text-white ring-2 ring-blue-400'
+  switch (type) {
+    case 'absent-full':      return 'bg-red-50 border-2 border-red-500 text-slate-900 hover:bg-red-100'
+    case 'absent-morning':   return 'bg-orange-50 border-2 border-orange-400 text-slate-900 hover:bg-orange-100'
+    case 'absent-afternoon': return 'bg-amber-50 border-2 border-amber-400 text-slate-900 hover:bg-amber-100'
+    case 'onduty':           return 'bg-purple-50 border-2 border-purple-400 text-slate-900 hover:bg-purple-100'
+    case 'meeting':          return 'bg-teal-50 border-2 border-teal-400 text-slate-900 hover:bg-teal-100'
+    case 'substitution':     return 'bg-yellow-50 border-2 border-yellow-400 text-slate-900 hover:bg-yellow-100'
+    default:                 return 'bg-white text-slate-900 border border-slate-200 hover:bg-slate-50'
+  }
+}
+
+const getDateBadgeClass = (type: DateInfo['type'] | undefined): string => {
+  switch (type) {
+    case 'absent-full':      return 'bg-red-500 text-white'
+    case 'absent-morning':   return 'bg-orange-500 text-white'
+    case 'absent-afternoon': return 'bg-amber-500 text-white'
+    case 'onduty':           return 'bg-purple-500 text-white'
+    case 'meeting':          return 'bg-teal-500 text-white'
+    case 'substitution':     return 'bg-yellow-600 text-white'
+    default:                 return 'bg-slate-400 text-white'
+  }
+}
+
+const getDateTypeLabel = (type: DateInfo['type'] | undefined): string => {
+  switch (type) {
+    case 'absent-full':      return 'Absent (Full)'
+    case 'absent-morning':   return 'Leave (FN)'
+    case 'absent-afternoon': return 'Leave (AN)'
+    case 'onduty':           return 'On Duty'
+    case 'meeting':          return 'Meeting'
+    case 'substitution':     return 'Substitute'
+    default:                 return ''
+  }
 }
 
 interface AlterationCalendarProps {
@@ -168,29 +208,23 @@ export const AlterationCalendar: React.FC<AlterationCalendarProps> = ({
                 className={`
                   aspect-square p-2 rounded-lg text-sm font-medium transition-colors
                   ${day === null ? 'bg-slate-50 text-slate-300 cursor-default' : ''}
-                  ${
-                    day !== null && isSelected
-                      ? 'bg-blue-600 text-white ring-2 ring-blue-400'
-                      : day !== null && type === 'absence'
-                        ? 'bg-red-50 border-2 border-red-400 text-slate-900 hover:bg-red-100'
-                        : day !== null && type === 'substitution'
-                          ? 'bg-yellow-50 border-2 border-yellow-400 text-slate-900 hover:bg-yellow-100'
-                          : day !== null
-                            ? 'bg-white text-slate-900 border border-slate-200 hover:bg-slate-50'
-                            : ''
-                  }
+                  ${day !== null ? getDateCellClass(type, isSelected) : ''}
                 `}
                 disabled={day === null}
+                title={day !== null && type ? `${getDateTypeLabel(type)} — ${count} alteration${count !== 1 ? 's' : ''}` : undefined}
               >
                 <div className="text-center">
                   {day}
                   {hasAlterations && (
                     <div className="text-xs mt-1">
-                      <span className={`inline-block px-1.5 py-0.5 rounded font-bold ${
-                        type === 'absence' ? 'bg-red-500 text-white' : 'bg-yellow-600 text-white'
-                      }`}>
-                        {count}
+                      <span className={`inline-block px-1.5 py-0.5 rounded font-bold ${getDateBadgeClass(type)}`}>
+                        {count > 0 ? count : '●'}
                       </span>
+                    </div>
+                  )}
+                  {!hasAlterations && day !== null && dateInfoByType[dateStr!] && (
+                    <div className="text-xs mt-1">
+                      <span className={`inline-block w-2 h-2 rounded-full ${getDateBadgeClass(type)}`} />
                     </div>
                   )}
                 </div>
@@ -250,18 +284,8 @@ export const AlterationCalendar: React.FC<AlterationCalendarProps> = ({
               <button
                 key={index}
                 onClick={() => onDateSelect(isSelected ? null : dateStr)}
-                className={`
-                  p-4 rounded-lg text-center transition-colors
-                  ${
-                    isSelected
-                      ? 'bg-blue-600 text-white ring-2 ring-blue-400'
-                      : type === 'absence'
-                        ? 'bg-red-50 border-2 border-red-400 text-slate-900 hover:bg-red-100'
-                        : type === 'substitution'
-                          ? 'bg-yellow-50 border-2 border-yellow-400 text-slate-900 hover:bg-yellow-100'
-                          : 'bg-white border border-slate-200 text-slate-900 hover:bg-slate-50'
-                  }
-                `}
+                className={`p-4 rounded-lg text-center transition-colors ${getDateCellClass(type, isSelected)}`}
+                title={type ? `${getDateTypeLabel(type)} — ${count} alteration${count !== 1 ? 's' : ''}` : undefined}
               >
                 <div className="font-semibold text-sm">{dayName}</div>
                 <div className="text-lg font-bold mt-1">
@@ -269,12 +293,13 @@ export const AlterationCalendar: React.FC<AlterationCalendarProps> = ({
                 </div>
                 {hasAlterations && (
                   <div className="mt-2">
-                    <span className={`inline-block px-2 py-1 text-xs rounded font-bold ${
-                      type === 'absence' ? 'bg-red-500 text-white' : 'bg-yellow-600 text-white'
-                    }`}>
+                    <span className={`inline-block px-2 py-1 text-xs rounded font-bold ${getDateBadgeClass(type)}`}>
                       {count} alter.
                     </span>
                   </div>
+                )}
+                {!hasAlterations && type && (
+                  <div className="mt-1 text-xs font-medium opacity-70">{getDateTypeLabel(type)}</div>
                 )}
               </button>
             )

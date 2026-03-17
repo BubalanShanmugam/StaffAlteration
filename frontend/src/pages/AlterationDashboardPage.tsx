@@ -18,15 +18,26 @@ interface Alteration {
   dayOrder: number
   periodNumber: number
   alterationDate: string
-  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT'
+  absenceType: 'FN' | 'AN' | 'AF' | 'ONDUTY' | 'PERIOD_WISE_ABSENT' | 'PERIOD_1' | 'PERIOD_2' | 'PERIOD_3' | 'PERIOD_4' | 'PERIOD_5' | 'PERIOD_6'
   status: string
   remarks?: string
 }
 
 interface DateInfo {
   date: string
-  type: 'absence' | 'substitution' // absence = red, substitution = yellow
+  type: 'absent-full' | 'absent-morning' | 'absent-afternoon' | 'onduty' | 'meeting' | 'substitution'
   count: number
+  attendanceStatus?: string
+  dayType?: string
+}
+
+interface AttendanceRecord {
+  id: number
+  staffId: string
+  attendanceDate: string
+  status: string
+  dayType: string
+  remarks?: string
 }
 
 export const AlterationDashboardPage: React.FC = () => {
@@ -40,6 +51,7 @@ export const AlterationDashboardPage: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'monthly' | 'weekly'>('monthly')
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [attendanceByDate, setAttendanceByDate] = useState<{ [date: string]: AttendanceRecord }>({})
 
   // Memoize loadAlterations to prevent unnecessary re-renders
   const loadAlterations = useCallback(async () => {
@@ -67,6 +79,25 @@ export const AlterationDashboardPage: React.FC = () => {
   useEffect(() => {
     loadAlterations()
   }, [user, loadAlterations])
+
+  // Load attendance records so the calendar can show colour-coded statuses
+  const loadAttendance = useCallback(async () => {
+    const staffId = user?.staffId || user?.username
+    if (!staffId) return
+    try {
+      const res = await attendanceAPI.getStaffAttendance(staffId)
+      const records: AttendanceRecord[] = res.data.data || []
+      const byDate: { [date: string]: AttendanceRecord } = {}
+      records.forEach((r) => { byDate[r.attendanceDate] = r })
+      setAttendanceByDate(byDate)
+    } catch (err) {
+      console.warn('[AlterationDashboard] Could not load attendance records (non-fatal):', err)
+    }
+  }, [user?.staffId, user?.username])
+
+  useEffect(() => {
+    loadAttendance()
+  }, [loadAttendance])
 
   // Set up WebSocket listeners for real-time updates
   useAlterationWebSocket(
@@ -96,28 +127,62 @@ export const AlterationDashboardPage: React.FC = () => {
     user?.departmentId
   )
 
-  // Categorize alterations for calendar display
+  // Categorize dates for calendar display — driven by ATTENDANCE STATUS, not just alteration type
   const dateInfoByType = useMemo(() => {
     const dates: { [key: string]: DateInfo } = {}
-    
-    alterations.forEach((alt) => {
-      const key = alt.alterationDate
-      const isOriginalStaff = alt.originalStaffId === user?.staffId
-      const type = isOriginalStaff ? 'absence' : 'substitution'
-      
-      if (!dates[key]) {
-        dates[key] = { date: key, type, count: 0 }
+
+    // 1) User's own attendance records → determine the day colour (absence type / onduty / meeting)
+    Object.values(attendanceByDate).forEach((rec) => {
+      const status = rec.status?.toUpperCase()
+      if (status === 'PRESENT') return // no colour for present days
+
+      const dayType = (rec.dayType || 'FULL_DAY').toUpperCase()
+      let type: DateInfo['type']
+
+      if (status === 'ONDUTY') {
+        type = 'onduty'
+      } else if (status === 'MEETING') {
+        type = 'meeting'
+      } else {
+        // ABSENT or LEAVE
+        if (dayType === 'MORNING_ONLY') type = 'absent-morning'
+        else if (dayType === 'AFTERNOON_ONLY') type = 'absent-afternoon'
+        else type = 'absent-full'
       }
-      dates[key].count++
+
+      const altCount = alterations.filter(
+        (a) => a.alterationDate === rec.attendanceDate && a.originalStaffId === user?.staffId,
+      ).length
+
+      dates[rec.attendanceDate] = {
+        date: rec.attendanceDate,
+        type,
+        count: altCount,
+        attendanceStatus: rec.status,
+        dayType: rec.dayType,
+      }
     })
-    
+
+    // 2) Dates where the user is a SUBSTITUTE (and not already marked by their own attendance)
+    alterations.forEach((alt) => {
+      if (alt.substituteStaffId !== user?.staffId) return
+      const key = alt.alterationDate
+      if (dates[key] && dates[key].type !== 'substitution') return // own absence takes priority
+      if (!dates[key]) {
+        dates[key] = { date: key, type: 'substitution', count: 0 }
+      }
+      if (dates[key].type === 'substitution') {
+        dates[key].count++
+      }
+    })
+
     return dates
-  }, [alterations, user?.staffId])
+  }, [alterations, attendanceByDate, user?.staffId])
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
-      await loadAlterations()
+      await Promise.all([loadAlterations(), loadAttendance()])
       setSuccess('✅ Alterations refreshed!')
       setTimeout(() => setSuccess(null), 2000)
     } catch (err) {
@@ -144,11 +209,17 @@ export const AlterationDashboardPage: React.FC = () => {
     }
   }
 
-  // Filter alterations by selected date and active tab
-  const filteredAlterations = alterations.filter((alt) => {
-    const dateMatch = !selectedDate || alt.alterationDate === selectedDate
-    return dateMatch
-  })
+  // Filter alterations by selected date AND active tab
+  const filteredAlterations = useMemo(() => {
+    return alterations.filter((alt) => {
+      const dateMatch = !selectedDate || alt.alterationDate === selectedDate
+      const tabMatch =
+        activeTab === 'as-original'
+          ? alt.originalStaffId === user?.staffId
+          : alt.substituteStaffId === user?.staffId
+      return dateMatch && tabMatch
+    })
+  }, [alterations, selectedDate, activeTab, user?.staffId])
 
   const handleAcknowledge = async (alterationId: number) => {
     try {
@@ -189,7 +260,13 @@ export const AlterationDashboardPage: React.FC = () => {
       'AN': 'Half Day Morning Leave (9AM - 1PM)',
       'AF': 'Half Day Afternoon Leave (1PM - 5PM)',
       'ONDUTY': 'On Duty - Full Day',
-      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent`
+      'PERIOD_WISE_ABSENT': `Period ${alteration.periodNumber} Absent`,
+      'PERIOD_1': 'Period 1 (9:00-10:00)',
+      'PERIOD_2': 'Period 2 (10:00-11:00)',
+      'PERIOD_3': 'Period 3 (11:00-12:00)',
+      'PERIOD_4': 'Period 4 (12:00-1:00)',
+      'PERIOD_5': 'Period 5 (1:00-2:00)',
+      'PERIOD_6': 'Period 6 (2:00-3:00)',
     }
     
     return absenceTypeMap[alteration.absenceType] || `Period ${alteration.periodNumber}`
@@ -205,6 +282,47 @@ export const AlterationDashboardPage: React.FC = () => {
       6: '2:00-3:00',
     }
     return periods[periodNumber] || 'Unknown'
+  }
+
+  const getAttendanceStatusDisplay = (status: string, dayType: string) => {
+    const dayLabel: Record<string, string> = {
+      FULL_DAY: 'Full Day',
+      MORNING_ONLY: 'Forenoon (FN)',
+      AFTERNOON_ONLY: 'Afternoon (AN)',
+    }
+    const statusLabel: Record<string, string> = {
+      ABSENT: 'Absent',
+      LEAVE: 'Leave',
+      ONDUTY: 'On Duty',
+      MEETING: 'Meeting',
+      PERIOD_WISE_ABSENT: 'Period-wise Absent',
+      PERIOD_1: 'Period 1 (9:00-10:00)',
+      PERIOD_2: 'Period 2 (10:00-11:00)',
+      PERIOD_3: 'Period 3 (11:00-12:00)',
+      PERIOD_4: 'Period 4 (12:00-1:00)',
+      PERIOD_5: 'Period 5 (1:00-2:00)',
+      PERIOD_6: 'Period 6 (2:00-3:00)',
+      PRESENT: 'Present',
+    }
+    const statusColor: Record<string, string> = {
+      ABSENT:             'bg-red-100 text-red-800 border border-red-300',
+      LEAVE:              'bg-red-100 text-red-800 border border-red-300',
+      ONDUTY:             'bg-purple-100 text-purple-800 border border-purple-300',
+      MEETING:            'bg-teal-100 text-teal-800 border border-teal-300',
+      PERIOD_WISE_ABSENT: 'bg-orange-100 text-orange-800 border border-orange-300',
+      PERIOD_1: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_2: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_3: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_4: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_5: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PERIOD_6: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
+      PRESENT:            'bg-green-100 text-green-800 border border-green-300',
+    }
+    return {
+      label: statusLabel[status] ?? status,
+      dayLabel: dayLabel[dayType] ?? dayType,
+      colorClass: statusColor[status] ?? 'bg-slate-100 text-slate-800',
+    }
   }
 
   return (
@@ -310,21 +428,12 @@ export const AlterationDashboardPage: React.FC = () => {
             <div className="inline-block w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
             <p className="mt-4 text-slate-600">Loading alterations...</p>
           </Card>
-        ) : alterations.length === 0 ? (
-          <Card className="p-12 text-center">
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <p className="text-slate-600 font-medium">
-              {activeTab === 'as-original'
-                ? 'No absences recorded'
-                : 'No substitute assignments'}
-            </p>
-          </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Calendar */}
             <div className="lg:col-span-1">
               <AlterationCalendar
-                alterations={filteredAlterations}
+                alterations={alterations}
                 dateInfoByType={dateInfoByType}
                 onDateSelect={setSelectedDate}
                 selectedDate={selectedDate}
@@ -336,6 +445,40 @@ export const AlterationDashboardPage: React.FC = () => {
             <div className="lg:col-span-2">
               {selectedDate ? (
                 <div className="space-y-4">
+                  {/* Attendance Record Banner */}
+                  {(() => {
+                    const rec = attendanceByDate[selectedDate]
+                    if (!rec || rec.status?.toUpperCase() === 'PRESENT') return null
+                    const { label, dayLabel, colorClass } = getAttendanceStatusDisplay(
+                      rec.status?.toUpperCase(),
+                      rec.dayType?.toUpperCase() || 'FULL_DAY',
+                    )
+                    return (
+                      <div className={`rounded-lg p-4 ${colorClass}`}>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="text-lg">
+                            {rec.status?.toUpperCase() === 'ABSENT' || rec.status?.toUpperCase() === 'LEAVE'
+                              ? '🔴'
+                              : rec.status?.toUpperCase() === 'ONDUTY'
+                              ? '🟣'
+                              : rec.status?.toUpperCase() === 'MEETING'
+                              ? '🔵'
+                              : '🟡'}
+                          </span>
+                          <div>
+                            <p className="font-bold text-sm">
+                              Attendance: {label} — {dayLabel}
+                            </p>
+                            {rec.remarks && (
+                              <p className="text-xs mt-0.5 opacity-80">Remarks: {rec.remarks}</p>
+                            )}
+                          </div>
+                          <span className="ml-auto text-xs opacity-60">DB #{rec.id}</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <h3 className="font-semibold text-blue-900">
                       Alterations for {new Date(selectedDate).toLocaleDateString('en-US', {
@@ -385,6 +528,7 @@ export const AlterationDashboardPage: React.FC = () => {
                                       alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
                                       alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
                                       alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                                      alteration.absenceType.startsWith('PERIOD_') ? 'bg-yellow-100 text-yellow-700' :
                                       'bg-yellow-100 text-yellow-700'
                                     }`}>
                                       {getPeriodDisplay(alteration)}
@@ -393,8 +537,7 @@ export const AlterationDashboardPage: React.FC = () => {
                                 </div>
                                 <div>
                                   <p className="text-slate-500 font-medium">
-                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}
-                                  </p>
+                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}</p>
                                   <p className="text-slate-900">
                                     {activeTab === 'as-original'
                                       ? alteration.substituteStaffName
@@ -499,10 +642,93 @@ export const AlterationDashboardPage: React.FC = () => {
                   )}
                 </div>
               ) : (
-                <Card className="p-12 text-center">
-                  <Clock className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-                  <p className="text-slate-600 font-medium">Select a date from the calendar to view alterations</p>
-                </Card>
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-slate-900">
+                      {activeTab === 'as-original'
+                        ? 'All Classes I\'m Missing'
+                        : 'All Classes I\'m Substituting'}
+                    </h3>
+                    <p className="text-sm text-slate-600 mt-1">
+                      {filteredAlterations.length} alteration{filteredAlterations.length !== 1 ? 's' : ''} — click a date on the calendar to filter
+                    </p>
+                  </div>
+
+                  {filteredAlterations.length === 0 ? (
+                    <Card className="p-8 text-center">
+                      <CheckCircle className="w-10 h-10 text-green-500 mx-auto mb-3" />
+                      <p className="text-slate-600">
+                        {activeTab === 'as-original'
+                          ? 'No absences recorded'
+                          : 'No substitute assignments'}
+                      </p>
+                    </Card>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredAlterations.map((alteration) => (
+                        <Card
+                          key={alteration.id}
+                          className={`p-4 border-l-4 transition-all hover:shadow-md ${
+                            alteration.status === 'ASSIGNED'
+                              ? 'border-l-yellow-500'
+                              : alteration.status === 'ACKNOWLEDGED'
+                                ? 'border-l-blue-500'
+                                : 'border-l-green-500'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <div>
+                                  <h4 className="font-semibold text-slate-900">{alteration.subjectName}</h4>
+                                  <p className="text-xs text-slate-500">
+                                    Class: {alteration.classCode} ·{' '}
+                                    {new Date(alteration.alterationDate).toLocaleDateString('en-US', {
+                                      weekday: 'short', month: 'short', day: 'numeric',
+                                    })}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 text-sm mt-3">
+                                <div>
+                                  <p className="text-slate-500 font-medium">Absence Type</p>
+                                  <span className={`px-2 py-1 rounded text-xs ${
+                                    alteration.absenceType === 'FN' ? 'bg-red-100 text-red-700' :
+                                    alteration.absenceType === 'AN' ? 'bg-orange-100 text-orange-700' :
+                                    alteration.absenceType === 'AF' ? 'bg-amber-100 text-amber-700' :
+                                    alteration.absenceType === 'ONDUTY' ? 'bg-purple-100 text-purple-700' :
+                                    alteration.absenceType.startsWith('PERIOD_') ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-yellow-100 text-yellow-700'
+                                  }`}>
+                                    {getPeriodDisplay(alteration)}
+                                  </span>
+                                </div>
+                                <div>
+                                  <p className="text-slate-500 font-medium">
+                                    {activeTab === 'as-original' ? 'Substitute' : 'Original Staff'}
+                                  </p>
+                                  <p className="text-slate-900">
+                                    {activeTab === 'as-original'
+                                      ? alteration.substituteStaffName
+                                      : alteration.originalStaffName}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                            <span
+                              className={`ml-4 inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(
+                                alteration.status
+                              )}`}
+                            >
+                              {getStatusIcon(alteration.status)}
+                              {alteration.status}
+                            </span>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -511,26 +737,47 @@ export const AlterationDashboardPage: React.FC = () => {
         {/* Calendar Legend */}
         <Card className="p-6 bg-slate-50 border-2 border-slate-300">
           <h3 className="font-semibold text-slate-900 mb-4">📅 Calendar Color Guide</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-300">
-              <span className="text-2xl">🔴</span>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-300">
+              <span className="text-xl">🔴</span>
               <div>
-                <p className="font-semibold text-red-900">RED - ABSENCE</p>
-                <p className="text-sm text-red-800">You are absent/on-duty (original staff)</p>
+                <p className="font-semibold text-red-900 text-sm">RED — Absent / Leave (Full Day)</p>
+                <p className="text-xs text-red-700">FN — Full day absent/leave</p>
               </div>
             </div>
-            <div className="flex items-start gap-3 p-3 bg-yellow-50 rounded-lg border border-yellow-300">
-              <span className="text-2xl">🟡</span>
+            <div className="flex items-start gap-2 p-3 bg-orange-50 rounded-lg border border-orange-300">
+              <span className="text-xl">🟠</span>
               <div>
-                <p className="font-semibold text-yellow-900">YELLOW - SUBSTITUTION</p>
-                <p className="text-sm text-yellow-800">You need to substitute for another staff</p>
+                <p className="font-semibold text-orange-900 text-sm">ORANGE — Leave (FN)</p>
+                <p className="text-xs text-orange-700">Forenoon half-day (Morning)</p>
               </div>
             </div>
-            <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-300">
-              <span className="text-2xl">🔵</span>
+            <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-300">
+              <span className="text-xl">🟡</span>
               <div>
-                <p className="font-semibold text-blue-900">BLUE - SELECTED</p>
-                <p className="text-sm text-blue-800">You clicked on this date</p>
+                <p className="font-semibold text-amber-900 text-sm">AMBER — Leave (AN)</p>
+                <p className="text-xs text-amber-700">Afternoon half-day</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 p-3 bg-purple-50 rounded-lg border border-purple-300">
+              <span className="text-xl">🟣</span>
+              <div>
+                <p className="font-semibold text-purple-900 text-sm">PURPLE — On Duty</p>
+                <p className="text-xs text-purple-700">Official duty outside campus</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 p-3 bg-teal-50 rounded-lg border border-teal-300">
+              <span className="text-xl">🔵</span>
+              <div>
+                <p className="font-semibold text-teal-900 text-sm">TEAL — Meeting</p>
+                <p className="text-xs text-teal-700">In-campus meeting (period-wise)</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 p-3 bg-yellow-50 rounded-lg border border-yellow-300">
+              <span className="text-xl">⭐</span>
+              <div>
+                <p className="font-semibold text-yellow-900 text-sm">YELLOW — Substitute</p>
+                <p className="text-xs text-yellow-700">You are covering another staff</p>
               </div>
             </div>
           </div>
